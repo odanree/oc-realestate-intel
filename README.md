@@ -112,9 +112,8 @@ tests/
 - [x] Neo4j schema + owner-name normalization
 - [x] OC Public Works ArcGIS ingestion — 2,000 Irvine parcels seeded; 702k available
 - [x] sentence-transformers (all-MiniLM-L6-v2) real embeddings
-- [x] Hybrid retrieval: APN-regex fast path + dense vector fallback
+- [x] Hybrid retrieval: APN-regex fast path → BM25 + dense fused via Reciprocal Rank Fusion
 - [ ] Owner ingestion (assessor data is paywalled — needs separate scrape or API)
-- [ ] BM25 layer for proper-noun street searches
 
 **Weekend 2 — Agents**
 - [x] LangGraph supervisor with router/retrieval/comparison/summarize

@@ -78,12 +78,12 @@ async def upsert_parcel(apn: str, text: str, payload: dict) -> None:
 async def search_parcels(query: str, top_k: int = 5) -> list[dict]:
     client = _get_client()
     vector = _embedder.embed(query)
-    hits = await client.search(
+    result = await client.query_points(
         collection_name=settings.qdrant_collection,
-        query_vector=vector,
+        query=vector,
         limit=top_k,
     )
-    return [hit.payload or {} for hit in hits]
+    return [hit.payload or {} for hit in result.points]
 
 
 async def comps_in_radius(apn: str, radius_miles: float = 0.5, top_k: int = 10) -> list[dict]:
@@ -99,15 +99,19 @@ async def comps_in_radius(apn: str, radius_miles: float = 0.5, top_k: int = 10) 
 
     from qdrant_client.models import FieldCondition, Filter, MatchValue
 
-    hits = await client.search(
+    result = await client.query_points(
         collection_name=settings.qdrant_collection,
-        query_vector=_embedder.embed(f"recent sale {zip_code}"),
+        query=_embedder.embed(f"recent sale {zip_code}"),
         query_filter=Filter(
             must=[FieldCondition(key="zip", match=MatchValue(value=zip_code))]
         ),
         limit=top_k,
     )
-    return [hit.payload or {} for hit in hits if (hit.payload or {}).get("apn") != apn]
+    return [
+        hit.payload or {}
+        for hit in result.points
+        if (hit.payload or {}).get("apn") != apn
+    ]
 
 
 def _apn_to_int(apn: str) -> int:

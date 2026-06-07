@@ -134,7 +134,9 @@ SUMMARIZE_SYSTEM = """You are an Orange County real-estate analyst.
 
 Answer the user's question using ONLY the retrieved facts below. Cite parcels by APN.
 If the retrieved facts do not contain the answer, say so plainly — do not invent details.
-Keep the answer tight and factual; no boilerplate."""
+NEVER invent or guess URLs, phone numbers, agency websites, or external resources.
+If you want to suggest where to look next, say "the OC Assessor's office" by name
+without giving a URL. Keep the answer tight and factual; no boilerplate."""
 
 
 async def summarize_node(state: AgentState) -> AgentState:

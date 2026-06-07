@@ -124,9 +124,27 @@ tests/
 - [ ] Next.js 15 chat UI
 
 **Weekend 3 — Eval + Polish**
-- [ ] G-Eval scorecard via [evalkit](../evalkit) (faithfulness, answer relevance, citation precision)
-- [ ] 30-question golden set; compare Sonnet 4.6 vs Opus 4.7 vs GPT-4o
+- [x] [evalkit](../evalkit) integration: G-Eval faithfulness + answer relevance via LLM-as-judge
+- [x] 12-case golden set + programmatic intent/citation/refusal metrics
+- [x] Markdown report generator, `make eval` target
+- [ ] Expand to 30+ cases; model comparison sweeps (Sonnet 4.6 / Opus 4.7 / GPT-4o)
 - [ ] Loom demo + architecture diagram
+
+## Eval results (latest)
+
+| metric | score |
+|---|---|
+| `intent_accuracy` | 0.92 |
+| `citation_recall` | 1.00 |
+| `citation_precision` | 1.00 |
+| `refusal_correctness` | 1.00 |
+| `faithfulness` | 9.58 / 10 |
+| `answer_relevance` | 5.75 / 10 |
+
+The eval caught a real bug on the first run: the agent invented an external
+URL ("ocassessor.gov") when asked about owner data — faithfulness dropped to
+6.5 on that case. Tightening the summarize prompt to forbid invented URLs
+recovered the score. See [`evals/reports/`](evals/reports/) for full reports.
 
 ## Technologies
 

@@ -57,6 +57,11 @@ REFUSAL_TRIGGERS = (
     "i can't",
     "do not include",
     "does not include",
+    "not identified",  # 2026-06-07: missed by initial run
+    "not specified",
+    "not present",
+    "not in the available",
+    "not in the retrieved",
 )
 
 _APN_RE = re.compile(r"\b\d{3}-\d{2,3}-\d{2,4}\b")

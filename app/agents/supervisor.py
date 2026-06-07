@@ -13,6 +13,7 @@ The router classifies intent; comparison only runs when the query is multi-parce
 from __future__ import annotations
 
 import logging
+import re
 from typing import Literal
 
 from langchain_anthropic import ChatAnthropic
@@ -135,12 +136,28 @@ async def summarize_node(state: AgentState) -> AgentState:
         HumanMessage(content=f"=== USER QUESTION ===\n{state['query']}\n\n=== FACTS ===\n{facts}"),
     ])
     answer = response.content if isinstance(response.content, str) else str(response.content)
-    citations = [
-        {"apn": p.get("apn"), "address": p.get("address")}
-        for p in state.get("parcels") or []
-        if p.get("apn")
-    ]
+    citations = _citations_from_answer(answer, state.get("parcels") or [])
     return {"answer": answer, "citations": citations}
+
+
+# APN format: three groups of digits separated by hyphens (e.g. 934-21-145).
+_APN_PATTERN = re.compile(r"\b\d{3}-\d{2,3}-\d{3,4}\b")
+
+
+def _citations_from_answer(answer: str, retrieved: list[dict]) -> list[dict]:
+    """Only cite parcels whose APN actually appears in the answer text.
+
+    Falls back to all retrieved parcels if the model didn't reference any APNs
+    (e.g. when the answer is a refusal / no-match response).
+    """
+    mentioned = set(_APN_PATTERN.findall(answer))
+    if not mentioned:
+        return []
+    return [
+        {"apn": p["apn"], "address": p.get("address")}
+        for p in retrieved
+        if p.get("apn") in mentioned
+    ]
 
 
 def _format_facts(state: AgentState) -> str:

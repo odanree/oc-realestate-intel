@@ -113,7 +113,8 @@ tests/
 - [x] OC Public Works ArcGIS ingestion — 2,000 Irvine parcels seeded; 702k available
 - [x] sentence-transformers (all-MiniLM-L6-v2) real embeddings
 - [x] Hybrid retrieval: APN-regex fast path → BM25 + dense fused via Reciprocal Rank Fusion
-- [ ] Owner ingestion (assessor data is paywalled — needs separate scrape or API)
+- [x] Synthetic owner + title-chain generator (assessor data is paywalled — see `app/ingestion/synthetic_owners.py` for the swap path to a real provider)
+- [x] Neo4j seeding: Owner ↔ Parcel ↔ TRANSFERRED graph with temporally-consistent chains
 
 **Weekend 2 — Agents**
 - [x] LangGraph supervisor with router/retrieval/comparison/summarize
@@ -130,7 +131,9 @@ tests/
 - [ ] Expand to 30+ cases; model comparison sweeps (Sonnet 4.6 / Opus 4.7 / GPT-4o)
 - [ ] Loom demo + architecture diagram
 
-## Eval results (latest)
+## Eval results
+
+13-case golden set, judged by Claude Sonnet 4.6 via [evalkit](../evalkit).
 
 | metric | score |
 |---|---|
@@ -138,13 +141,24 @@ tests/
 | `citation_recall` | 1.00 |
 | `citation_precision` | 1.00 |
 | `refusal_correctness` | 1.00 |
-| `faithfulness` | 9.58 / 10 |
-| `answer_relevance` | 5.75 / 10 |
+| `faithfulness` | **9.96** / 10 |
+| `answer_relevance` | 7.12 / 10 |
+| total judge cost | $0.05 |
 
-The eval caught a real bug on the first run: the agent invented an external
-URL ("ocassessor.gov") when asked about owner data — faithfulness dropped to
-6.5 on that case. Tightening the summarize prompt to forbid invented URLs
-recovered the score. See [`evals/reports/`](evals/reports/) for full reports.
+Findings the eval surfaced as the system evolved:
+
+1. **First run** — Faithfulness 9.54. Agent invented a URL (`ocassessor.gov`) on
+   owner queries. Tightened the summarize prompt to forbid invented external
+   resources.
+2. **Owner data added** — Faithfulness dropped to 8.46 because the title-chain
+   answers picked up speculation ("may indicate an arm's-length transaction").
+   Added explicit "no interpretation, no characterization" rules to the prompt.
+3. **Bug in the eval itself** — Faithfulness still 8.69 because the judge wasn't
+   getting `graph_facts` as part of its context, so it correctly flagged
+   every title-chain fact as ungrounded. Fixed `_format_context`; faithfulness
+   jumped to **9.96**.
+
+See [`evals/reports/`](evals/reports/) for full per-case detail.
 
 ## Technologies
 

@@ -132,11 +132,17 @@ async def comparison_node(state: AgentState) -> AgentState:
 
 SUMMARIZE_SYSTEM = """You are an Orange County real-estate analyst.
 
-Answer the user's question using ONLY the retrieved facts below. Cite parcels by APN.
-If the retrieved facts do not contain the answer, say so plainly — do not invent details.
-NEVER invent or guess URLs, phone numbers, agency websites, or external resources.
-If you want to suggest where to look next, say "the OC Assessor's office" by name
-without giving a URL. Keep the answer tight and factual; no boilerplate."""
+RULES — these are absolute:
+1. Answer using ONLY the retrieved facts. Do not speculate, infer motivation,
+   guess transaction types ("arm's-length", "inter-family", "gift"), or
+   characterize transfers beyond what the data literally says.
+2. Cite parcels by APN.
+3. If the retrieved facts do not contain the answer, say so plainly.
+4. NEVER invent URLs, phone numbers, agency websites, or external resources.
+   You may name "the OC Assessor's office" or "the OC Clerk-Recorder's office"
+   as places to look, but never describe what they do or supply a URL.
+5. No marketing language, no boilerplate, no "key observations" headers.
+   Plain factual prose or a tight table. That's it."""
 
 
 async def summarize_node(state: AgentState) -> AgentState:
@@ -174,12 +180,21 @@ def _citations_from_answer(answer: str, retrieved: list[dict]) -> list[dict]:
 def _format_facts(state: AgentState) -> str:
     parts: list[str] = []
     for i, p in enumerate(state.get("parcels") or [], start=1):
+        owner = p.get("owner") or "unknown"
         parts.append(
-            f"[{i}] APN {p.get('apn', '?')} — {p.get('address', '?')} — "
-            f"{p.get('owner', '?')} — last sale ${p.get('last_sale_price', '?')}"
+            f"[{i}] APN {p.get('apn', '?')} — {p.get('address', '?')} "
+            f"in {p.get('city', '?')} | owner: {owner} ({p.get('owner_kind') or 'n/a'}) "
+            f"| year_built: {p.get('year_built') or 'unknown'}"
         )
-    for g in state.get("graph_facts") or []:
-        parts.append(f"  · {g.get('date', '?')}: {g.get('grantor', '?')} → {g.get('grantee', '?')}")
+    if state.get("graph_facts"):
+        parts.append("\nTitle chain (most recent first):")
+        for g in state.get("graph_facts") or []:
+            price = g.get("price")
+            price_str = f"${price:,}" if price else "no price recorded"
+            parts.append(
+                f"  · {g.get('date', '?')} doc#{g.get('doc_number', '?')}: "
+                f"{g.get('grantor', '?')} → {g.get('grantee', '?')} ({price_str})"
+            )
     return "\n".join(parts) or "(no facts retrieved)"
 
 

@@ -43,12 +43,21 @@
   must_refuse: true
   notes: APN regex matches but no data exists; agent must refuse, not fabricate.
 
-- id: refuse_owner_query
+- id: owner_query_now_has_data
   query: "Who owns 461-211-62?"
   expected_intent: lookup
   must_cite: ["461-211-62"]
-  must_refuse: true
-  notes: We have address but no owner data — agent must say so.
+  notes: |
+    After the synthetic owner seed, agent should answer with the owner name
+    (no longer a refusal case). Owner data is synthetic — see ingestion docs.
+
+- id: title_chain_now_has_data
+  query: "Show the title chain for 461-211-62"
+  expected_intent: title_chain
+  must_cite: ["461-211-62"]
+  notes: |
+    After Neo4j seeding the title chain should return transfers.
+    No longer a must_refuse case.
 
 - id: compare_explicit
   query: "Compare 1 Park Plaza in Irvine to nearby properties"
@@ -60,11 +69,11 @@
   expected_intent: title_chain
   notes: Routes to title_chain. Graph is empty so it should refuse gracefully.
 
-- id: title_chain_no_data
-  query: "Show the title chain for 461-211-62"
+- id: refuse_title_chain_unknown_apn
+  query: "Show the title chain for parcel 999-999-99"
   expected_intent: title_chain
   must_refuse: true
-  notes: Neo4j has no data — must say so, not invent transfers.
+  notes: APN doesn't exist in Neo4j — must refuse, not invent.
 
 - id: summarize_address
   query: "Summarize 73 Bridgeport Rd Irvine"

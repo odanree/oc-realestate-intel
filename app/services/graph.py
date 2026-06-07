@@ -50,6 +50,88 @@ async def ensure_constraints() -> None:
         )
 
 
+async def clear_graph() -> None:
+    """Drop all Parcel/Owner nodes + their relationships. Used by --recreate."""
+    driver = _get_driver()
+    async with driver.session() as session:
+        await session.run("MATCH (n) WHERE n:Parcel OR n:Owner DETACH DELETE n")
+
+
+async def upsert_parcel_with_chain(parcel: dict) -> None:
+    """Write a parcel + its full title chain into Neo4j in one transaction.
+
+    Expected parcel shape (from synthetic_owners.generate_for_parcels):
+        {
+            "apn": "461-211-62",
+            "address": "73 BRIDGEPORT RD",
+            "city": "IRVINE",
+            "owner": "JOHN SMITH",
+            "owner_kind": "person",
+            "title_chain": [
+                {"date": "2024-...", "grantor": "...", "grantee": "...", ...},
+                ...
+            ],
+        }
+    """
+    apn = parcel["apn"]
+    driver = _get_driver()
+    async with driver.session() as session:
+        async with await session.begin_transaction() as tx:
+            # Parcel node
+            await tx.run(
+                """
+                MERGE (p:Parcel {apn: $apn})
+                SET p.address = $address, p.city = $city, p.zip = $zip
+                """,
+                apn=apn,
+                address=parcel.get("address") or "",
+                city=parcel.get("city") or "",
+                zip=parcel.get("zip") or "",
+            )
+
+            # Current owner + HOLDS edge
+            owner = parcel.get("owner")
+            if owner:
+                await tx.run(
+                    """
+                    MERGE (o:Owner {normalized_name: $normalized})
+                    SET o.name = $name, o.kind = $kind
+                    WITH o
+                    MATCH (p:Parcel {apn: $apn})
+                    MERGE (o)-[:HOLDS]->(p)
+                    """,
+                    normalized=_normalize_owner(owner),
+                    name=owner,
+                    kind=parcel.get("owner_kind") or "other",
+                    apn=apn,
+                )
+
+            # Title transfers: (Parcel)-[:TRANSFERRED]->(Owner-grantee)
+            for t in parcel.get("title_chain") or []:
+                grantee = t.get("grantee")
+                if not grantee:
+                    continue
+                await tx.run(
+                    """
+                    MERGE (o:Owner {normalized_name: $normalized})
+                    SET o.name = coalesce(o.name, $name), o.kind = coalesce(o.kind, $kind)
+                    WITH o
+                    MATCH (p:Parcel {apn: $apn})
+                    MERGE (p)-[t:TRANSFERRED {doc_number: $doc_number}]->(o)
+                    SET t.date = $date, t.price = $price, t.grantor = $grantor
+                    """,
+                    normalized=_normalize_owner(grantee),
+                    name=grantee,
+                    kind="other",
+                    apn=apn,
+                    doc_number=t.get("doc_number") or "",
+                    date=t.get("date") or "",
+                    price=t.get("price"),
+                    grantor=t.get("grantor") or "",
+                )
+            await tx.commit()
+
+
 async def owner_holdings(owner_name_or_apn: str) -> list[dict]:
     """Resolve owner by name OR by parcel APN, then return everything they hold."""
     driver = _get_driver()
@@ -72,7 +154,7 @@ async def title_chain(apn: str, limit: int = 20) -> list[dict]:
     cypher = """
     MATCH (p:Parcel {apn: $apn})-[t:TRANSFERRED]->(o:Owner)
     RETURN t.date AS date, t.doc_number AS doc_number, t.price AS price,
-           o.name AS grantee
+           t.grantor AS grantor, o.name AS grantee
     ORDER BY t.date DESC
     LIMIT $limit
     """

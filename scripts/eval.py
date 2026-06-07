@@ -62,6 +62,9 @@ REFUSAL_TRIGGERS = (
     "not present",
     "not in the available",
     "not in the retrieved",
+    "no facts",         # "no facts were retrieved" / "no facts found"
+    "no title chain",
+    "no chain",
 )
 
 _APN_RE = re.compile(r"\b\d{3}-\d{2,3}-\d{2,4}\b")
@@ -80,12 +83,14 @@ async def _run_case(graph, case: dict) -> dict:
     citations = state.get("citations") or []
     cited_apns = {c.get("apn") for c in citations if c.get("apn")}
     parcels = state.get("parcels") or []
+    graph_facts = state.get("graph_facts") or []
     return {
         **case,
         "answer": answer,
         "intent": intent,
         "cited_apns": cited_apns,
         "parcels": parcels,
+        "graph_facts": graph_facts,
     }
 
 
@@ -118,23 +123,37 @@ def _score_programmatic(row: dict) -> dict:
     }
 
 
-def _format_context(parcels: list[dict]) -> str:
-    """Build the context block passed to evalkit's Faithfulness judge."""
-    if not parcels:
-        return "(no parcels retrieved)"
-    lines = []
-    for p in parcels:
+def _format_context(parcels: list[dict], graph_facts: list[dict] | None = None) -> str:
+    """Build the context block passed to evalkit's Faithfulness judge.
+
+    Must mirror what the agent's summarize_node sees as ground truth —
+    parcels AND any title-chain rows from the graph. Without graph_facts,
+    the judge correctly flags every title-chain claim as hallucinated.
+    """
+    if not parcels and not graph_facts:
+        return "(no facts retrieved)"
+    lines: list[str] = []
+    for p in parcels or []:
         lines.append(
             f"APN {p.get('apn', '?')} — {p.get('address', '?')} "
-            f"in {p.get('city', '?')} | owner={p.get('owner') or 'unknown'} | "
-            f"year_built={p.get('year_built') or 'unknown'}"
+            f"in {p.get('city', '?')} | owner={p.get('owner') or 'unknown'} "
+            f"({p.get('owner_kind') or 'n/a'}) | year_built={p.get('year_built') or 'unknown'}"
         )
+    if graph_facts:
+        lines.append("Title chain (most recent first):")
+        for g in graph_facts:
+            price = g.get("price")
+            price_str = f"${price:,}" if price else "no price"
+            lines.append(
+                f"  - {g.get('date', '?')} doc#{g.get('doc_number', '?')}: "
+                f"{g.get('grantor', '?')} -> {g.get('grantee', '?')} ({price_str})"
+            )
     return "\n".join(lines)
 
 
 async def _score_llm(evaluator: Evaluator, row: dict) -> dict:
     """LLM-judged metrics via evalkit."""
-    context = _format_context(row["parcels"])
+    context = _format_context(row["parcels"], row.get("graph_facts"))
     result = evaluator.score(
         prompt=row["query"],
         completion=row["answer"] or "(empty)",

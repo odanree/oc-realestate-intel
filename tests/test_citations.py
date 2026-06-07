@@ -40,3 +40,12 @@ def test_handles_4_digit_third_group():
     assert _citations_from_answer(answer, parcels) == [
         {"apn": "111-22-3456", "address": "X"}
     ]
+
+
+def test_handles_2_digit_third_group():
+    """Real OC APNs like 461-211-62 have a 2-digit final group."""
+    parcels = [{"apn": "461-211-62", "address": "73 Bridgeport Rd"}]
+    answer = "Parcel 461-211-62 is on Bridgeport Rd."
+    assert _citations_from_answer(answer, parcels) == [
+        {"apn": "461-211-62", "address": "73 Bridgeport Rd"}
+    ]

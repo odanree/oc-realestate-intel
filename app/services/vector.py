@@ -68,11 +68,41 @@ async def ensure_collection() -> None:
         log.info("Created Qdrant collection %s", settings.qdrant_collection)
 
 
+async def recreate_collection() -> None:
+    """Drop and recreate the collection — used by `seed --recreate`."""
+    client = _get_client()
+    try:
+        await client.delete_collection(collection_name=settings.qdrant_collection)
+    except Exception as e:
+        log.info("delete_collection skipped: %s", e)
+    await client.create_collection(
+        collection_name=settings.qdrant_collection,
+        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+    )
+    log.info("Recreated Qdrant collection %s", settings.qdrant_collection)
+
+
 async def upsert_parcel(apn: str, text: str, payload: dict) -> None:
     client = _get_client()
     vector = _embedder.embed(text)
     point = PointStruct(id=_apn_to_int(apn), vector=vector, payload={**payload, "apn": apn})
     await client.upsert(collection_name=settings.qdrant_collection, points=[point])
+
+
+async def get_parcel_by_apn(apn: str) -> dict | None:
+    """Direct lookup by APN — bypasses vector search."""
+    client = _get_client()
+    point_id = _apn_to_int(apn)
+    try:
+        points = await client.retrieve(
+            collection_name=settings.qdrant_collection,
+            ids=[point_id],
+            with_payload=True,
+        )
+    except Exception as e:
+        log.warning("retrieve(%s) failed: %s", apn, e)
+        return None
+    return points[0].payload if points else None
 
 
 async def search_parcels(query: str, top_k: int = 5) -> list[dict]:

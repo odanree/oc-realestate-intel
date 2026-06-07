@@ -80,13 +80,22 @@ def route_after_router(state: AgentState) -> Literal["retrieval", "comparison", 
 
 
 async def retrieval_node(state: AgentState) -> AgentState:
-    """Hybrid retrieval — invoke whichever tools the intent calls for."""
+    """Hybrid retrieval — APN match goes through direct lookup; otherwise dense."""
     intent = state.get("intent", "lookup")
     query = state["query"]
     parcels: list[dict] = []
     graph_facts: list[dict] = []
 
-    if intent in ("lookup", "summarize"):
+    # Fast path: query mentions an APN → look it up exactly, skip semantic search.
+    mentioned_apns = _APN_PATTERN.findall(query)
+    if mentioned_apns and intent in ("lookup", "summarize", "title_chain"):
+        from app.services import vector
+        for apn in mentioned_apns:
+            hit = await vector.get_parcel_by_apn(apn)
+            if hit:
+                parcels.append(hit)
+
+    if not parcels and intent in ("lookup", "summarize"):
         from app.agents.tools import parcel_lookup
         parcels = await parcel_lookup.ainvoke({"query": query, "top_k": 5})
 
@@ -140,8 +149,8 @@ async def summarize_node(state: AgentState) -> AgentState:
     return {"answer": answer, "citations": citations}
 
 
-# APN format: three groups of digits separated by hyphens (e.g. 934-21-145).
-_APN_PATTERN = re.compile(r"\b\d{3}-\d{2,3}-\d{3,4}\b")
+# APN format: three groups of digits separated by hyphens (e.g. 934-21-145, 461-211-62).
+_APN_PATTERN = re.compile(r"\b\d{3}-\d{2,3}-\d{2,4}\b")
 
 
 def _citations_from_answer(answer: str, retrieved: list[dict]) -> list[dict]:

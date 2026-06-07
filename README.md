@@ -57,8 +57,10 @@ python -m venv .venv
 .\.venv\Scripts\activate
 pip install -e ".[dev,embeddings]"
 
-# 4. Seed synthetic data (replace with real OC Assessor scrape later)
-python -m scripts.seed
+# 4. Seed 2,000 real Irvine parcels from OC Public Works ArcGIS
+python -m scripts.seed --recreate --limit 2000
+# Or scope to a different area:
+python -m scripts.seed --recreate --where "SITE_ADDRESS LIKE '%NEWPORT BEACH%'" --limit 5000
 
 # 5. Run
 uvicorn app.main:app --reload --port 8000
@@ -108,13 +110,17 @@ tests/
 - [x] Project skeleton + docker-compose
 - [x] Pluggable embedder + Qdrant collection bootstrap
 - [x] Neo4j schema + owner-name normalization
-- [ ] OC Assessor scraper (replace synthetic stub) — 10k parcel target
-- [ ] Hybrid retrieval (BM25 + dense + graph hop)
+- [x] OC Public Works ArcGIS ingestion — 2,000 Irvine parcels seeded; 702k available
+- [x] sentence-transformers (all-MiniLM-L6-v2) real embeddings
+- [x] Hybrid retrieval: APN-regex fast path + dense vector fallback
+- [ ] Owner ingestion (assessor data is paywalled — needs separate scrape or API)
+- [ ] BM25 layer for proper-noun street searches
 
 **Weekend 2 — Agents**
 - [x] LangGraph supervisor with router/retrieval/comparison/summarize
 - [x] Four tools wired to data layer
 - [x] FastAPI /query + /query/stream (SSE)
+- [x] APN-grounded citations (regex-extracted from answer text)
 - [ ] LangSmith / Langfuse tracing
 - [ ] Next.js 15 chat UI
 

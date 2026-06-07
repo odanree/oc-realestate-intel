@@ -1,0 +1,83 @@
+# Golden eval set for oc-realestate-intel.
+#
+# Each item has:
+#   id              short stable identifier (used in reports)
+#   query           the user input the agent sees
+#   expected_intent which router branch should fire (router classification accuracy)
+#   must_cite       APNs that MUST appear in citations (citation recall)
+#   must_not_cite   APNs that MUST NOT appear (citation precision; usually for refusal cases)
+#   must_refuse     true → answer should say "no data" / "cannot confirm" / similar
+#   notes           why this case exists (for the report)
+#
+# Faithfulness & answer-relevance are LLM-judged via evalkit using the agent's
+# retrieved parcels as the context.
+
+- id: lookup_apn_basic
+  query: "What is parcel 461-211-62?"
+  expected_intent: lookup
+  must_cite: ["461-211-62"]
+  notes: APN fast path — direct ID lookup must work.
+
+- id: lookup_apn_in_sentence
+  query: "Tell me about APN 461-211-62 — who owns it?"
+  expected_intent: lookup
+  must_cite: ["461-211-62"]
+  must_refuse: true
+  notes: APN regex still matches inside a sentence; must refuse on owner since no data.
+
+- id: lookup_street_proper_noun
+  query: "Find parcels on Bridgeport Road in Irvine"
+  expected_intent: lookup
+  must_cite: ["461-211-62"]
+  notes: The BM25-rescue case. Pure dense retrieval failed here pre-hybrid.
+
+- id: lookup_common_street
+  query: "What's on Irvine Park Road?"
+  expected_intent: lookup
+  notes: Generic semantic search — should return Irvine Park parcels.
+
+- id: refuse_unknown_apn
+  query: "What is parcel 999-999-99?"
+  expected_intent: lookup
+  must_not_cite: ["999-999-99"]
+  must_refuse: true
+  notes: APN regex matches but no data exists; agent must refuse, not fabricate.
+
+- id: refuse_owner_query
+  query: "Who owns 461-211-62?"
+  expected_intent: lookup
+  must_cite: ["461-211-62"]
+  must_refuse: true
+  notes: We have address but no owner data — agent must say so.
+
+- id: compare_explicit
+  query: "Compare 1 Park Plaza in Irvine to nearby properties"
+  expected_intent: compare
+  notes: Should route to comparison node, not lookup.
+
+- id: title_chain_intent
+  query: "Trace the title chain on parcel 461-211-62"
+  expected_intent: title_chain
+  notes: Routes to title_chain. Graph is empty so it should refuse gracefully.
+
+- id: title_chain_no_data
+  query: "Show the title chain for 461-211-62"
+  expected_intent: title_chain
+  must_refuse: true
+  notes: Neo4j has no data — must say so, not invent transfers.
+
+- id: summarize_address
+  query: "Summarize 73 Bridgeport Rd Irvine"
+  expected_intent: summarize
+  must_cite: ["461-211-62"]
+  notes: Address → summarize → must find the parcel via hybrid retrieval.
+
+- id: route_unknown
+  query: "What's the weather in San Diego today?"
+  expected_intent: unknown
+  notes: Out-of-domain query should route to unknown and short-circuit.
+
+- id: route_unknown_vague
+  query: "tell me stuff"
+  expected_intent: unknown
+  notes: Too vague to classify — should be unknown.

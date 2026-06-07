@@ -1,0 +1,193 @@
+"""
+LangGraph supervisor: routes a user query through Router → Retrieval → Comparison → Summarize.
+
+Topology:
+
+    START → router ─┬─→ retrieval ───┐
+                    │                 ├─→ summarize → END
+                    └─→ comparison ──┘
+
+The router classifies intent; comparison only runs when the query is multi-parcel.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Literal
+
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
+from langgraph.graph import END, START, StateGraph
+
+from app.agents.state import AgentState
+from app.agents.tools import ALL_TOOLS
+from app.config import settings
+
+log = logging.getLogger(__name__)
+
+
+def _judge_llm() -> ChatAnthropic:
+    return ChatAnthropic(
+        model=settings.anthropic_model,
+        api_key=settings.anthropic_api_key,
+        max_tokens=2048,
+        streaming=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Router: classifies user intent
+# ---------------------------------------------------------------------------
+
+ROUTER_SYSTEM = """You are a router for an Orange County real-estate intelligence agent.
+Classify the user's query into ONE intent:
+
+  lookup       — find a specific parcel by address/APN/owner name
+  compare      — compare two or more parcels, or compare a parcel to recent comps
+  summarize    — summarize a single parcel, its history, or its owner's portfolio
+  title_chain  — trace ownership history / chain of title for a parcel
+  unknown      — query is not about real estate or is too vague
+
+Respond with ONLY the single-word intent."""
+
+
+async def router_node(state: AgentState) -> AgentState:
+    llm = _judge_llm()
+    response = await llm.ainvoke([
+        SystemMessage(content=ROUTER_SYSTEM),
+        HumanMessage(content=state["query"]),
+    ])
+    intent_raw = response.content.strip().lower() if isinstance(response.content, str) else ""
+    valid = {"lookup", "compare", "summarize", "title_chain", "unknown"}
+    intent = intent_raw if intent_raw in valid else "unknown"
+    log.info("router classified intent=%s for query=%r", intent, state["query"][:80])
+    return {"intent": intent}
+
+
+def route_after_router(state: AgentState) -> Literal["retrieval", "comparison", "end"]:
+    intent = state.get("intent", "unknown")
+    if intent == "unknown":
+        return "end"
+    if intent == "compare":
+        return "comparison"
+    return "retrieval"
+
+
+# ---------------------------------------------------------------------------
+# Retrieval: hybrid Qdrant + Neo4j lookup
+# ---------------------------------------------------------------------------
+
+
+async def retrieval_node(state: AgentState) -> AgentState:
+    """Hybrid retrieval — invoke whichever tools the intent calls for."""
+    intent = state.get("intent", "lookup")
+    query = state["query"]
+    parcels: list[dict] = []
+    graph_facts: list[dict] = []
+
+    if intent in ("lookup", "summarize"):
+        from app.agents.tools import parcel_lookup
+        parcels = await parcel_lookup.ainvoke({"query": query, "top_k": 5})
+
+    if intent == "title_chain" and parcels:
+        from app.agents.tools import title_chain
+        apn = parcels[0].get("apn", "")
+        if apn:
+            graph_facts = await title_chain.ainvoke({"apn": apn, "limit": 20})
+
+    return {"parcels": parcels, "graph_facts": graph_facts}
+
+
+# ---------------------------------------------------------------------------
+# Comparison: only runs for multi-parcel queries
+# ---------------------------------------------------------------------------
+
+
+async def comparison_node(state: AgentState) -> AgentState:
+    """Fetch a target parcel + comps for side-by-side analysis."""
+    from app.agents.tools import comps_in_radius, parcel_lookup
+
+    targets = await parcel_lookup.ainvoke({"query": state["query"], "top_k": 1})
+    comps: list[dict] = []
+    if targets:
+        apn = targets[0].get("apn", "")
+        if apn:
+            comps = await comps_in_radius.ainvoke({"apn": apn, "radius_miles": 0.5, "top_k": 10})
+    return {"parcels": targets + comps}
+
+
+# ---------------------------------------------------------------------------
+# Summarize: turn retrieved facts into a grounded natural-language answer
+# ---------------------------------------------------------------------------
+
+SUMMARIZE_SYSTEM = """You are an Orange County real-estate analyst.
+
+Answer the user's question using ONLY the retrieved facts below. Cite parcels by APN.
+If the retrieved facts do not contain the answer, say so plainly — do not invent details.
+Keep the answer tight and factual; no boilerplate."""
+
+
+async def summarize_node(state: AgentState) -> AgentState:
+    llm = _judge_llm()
+    facts = _format_facts(state)
+    response = await llm.ainvoke([
+        SystemMessage(content=SUMMARIZE_SYSTEM),
+        HumanMessage(content=f"=== USER QUESTION ===\n{state['query']}\n\n=== FACTS ===\n{facts}"),
+    ])
+    answer = response.content if isinstance(response.content, str) else str(response.content)
+    citations = [
+        {"apn": p.get("apn"), "address": p.get("address")}
+        for p in state.get("parcels") or []
+        if p.get("apn")
+    ]
+    return {"answer": answer, "citations": citations}
+
+
+def _format_facts(state: AgentState) -> str:
+    parts: list[str] = []
+    for i, p in enumerate(state.get("parcels") or [], start=1):
+        parts.append(
+            f"[{i}] APN {p.get('apn', '?')} — {p.get('address', '?')} — "
+            f"{p.get('owner', '?')} — last sale ${p.get('last_sale_price', '?')}"
+        )
+    for g in state.get("graph_facts") or []:
+        parts.append(f"  · {g.get('date', '?')}: {g.get('grantor', '?')} → {g.get('grantee', '?')}")
+    return "\n".join(parts) or "(no facts retrieved)"
+
+
+# ---------------------------------------------------------------------------
+# Build graph
+# ---------------------------------------------------------------------------
+
+
+def build_graph():
+    g: StateGraph = StateGraph(AgentState)
+    g.add_node("router", router_node)
+    g.add_node("retrieval", retrieval_node)
+    g.add_node("comparison", comparison_node)
+    g.add_node("summarize", summarize_node)
+
+    g.add_edge(START, "router")
+    g.add_conditional_edges(
+        "router",
+        route_after_router,
+        {"retrieval": "retrieval", "comparison": "comparison", "end": END},
+    )
+    g.add_edge("retrieval", "summarize")
+    g.add_edge("comparison", "summarize")
+    g.add_edge("summarize", END)
+    return g.compile()
+
+
+# Compiled graph singleton — lazy because tests may swap dependencies.
+_graph = None
+
+
+def get_graph():
+    global _graph
+    if _graph is None:
+        _graph = build_graph()
+    return _graph
+
+
+__all__ = ["AgentState", "ALL_TOOLS", "build_graph", "get_graph"]

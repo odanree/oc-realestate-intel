@@ -17,7 +17,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml ./
+# Hatchling validates `readme = "README.md"` at metadata-generation time,
+# so the README must be present even though we're only installing deps here.
+COPY pyproject.toml README.md ./
 RUN pip install --upgrade pip && \
     pip install -e ".[embeddings]"
 

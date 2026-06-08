@@ -1,230 +1,193 @@
 # oc-realestate-intel
 
-Multi-agent LangGraph system over Orange County real estate + title data. Built around hybrid retrieval (Qdrant vector index + Neo4j ownership graph) and a Claude Sonnet 4.6 reasoning loop.
+**Multi-agent LangGraph system over Orange County real-estate + title data.** Hybrid retrieval (BM25 + dense + RRF), live fallback over the full 702k-parcel OC ArcGIS layer, a 5-intent supervisor, evalkit-judged faithfulness, and Langfuse end-to-end tracing — every retrieval path tagged, every answer fact-grounded, every assertion provenance-flagged when the underlying source is synthetic.
 
-## What it does
+`LangGraph` · `LangChain` · `Claude Sonnet 4.6` · `FastAPI` · `SSE` · `Qdrant` (dense + BM25) · `Neo4j` · `Postgres` · `Pydantic v2` · `sentence-transformers` · `Next.js 16` · `React 19` · `Tailwind 4` · `Langfuse` · `evalkit`
 
-Ask natural-language questions about Orange County parcels:
+| | |
+|---|---|
+| **Faithfulness** (LLM-judged, 16 cases) | **9.94 / 10** |
+| **Citation precision / recall / refusal** | 1.00 each |
+| **Model picked by data** | Sonnet 4.6 (Opus offered no measurable lift) |
+| **Eval cost / run** | ~$0.07 |
 
-> "Show me everything Irvine Company owns within 92614."
-> "Trace the title chain on 100 Pacific Coast Hwy back to 2015."
-> "Compare 1 Park Plaza to recent sales within half a mile."
+---
 
-The system routes the query, retrieves grounded facts from a vector + graph + relational hybrid, and answers with APN-level citations.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                 FastAPI Gateway (/query)                     │
-│  · POST /api/v1/query          one-shot JSON                 │
-│  · GET  /api/v1/query/stream   SSE updates per node          │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-┌──────────────────────▼──────────────────────────────────────┐
-│             LangGraph Supervisor                             │
-│                                                              │
-│   START → router ─┬─→ retrieval ───┐                        │
-│                   │                 ├─→ summarize → END     │
-│                   └─→ comparison ──┘                        │
-│                                                              │
-│   Tools: parcel_lookup, owner_holdings,                      │
-│          comps_in_radius, title_chain                        │
-└──────────────────────┬──────────────────────────────────────┘
-                       │
-   ┌──────────┬────────┴────────┬─────────────┐
-   │          │                 │             │
-┌──▼─────┐ ┌──▼──────┐  ┌──────▼─────┐  ┌────▼────┐
-│ Qdrant │ │  Neo4j  │  │  Postgres  │  │ Claude  │
-│ vector │ │  graph  │  │  cached    │  │ Sonnet  │
-│ index  │ │ owners+ │  │  parcels + │  │  4.6    │
-│        │ │ deeds   │  │ transfers  │  │         │
-└────────┘ └─────────┘  └────────────┘  └─────────┘
-```
-
-## Quick start
+## Try it
 
 ```powershell
-# 1. Start data stores
-docker compose up -d
-
-# 2. Configure
-Copy-Item .env.example .env
-# edit ANTHROPIC_API_KEY
-
-# 3. Install
-python -m venv .venv
-.\.venv\Scripts\activate
+docker compose up -d                                 # Postgres + Qdrant + Neo4j
+python -m venv .venv && .\.venv\Scripts\activate
 pip install -e ".[dev,embeddings]"
+Copy-Item .env.example .env                          # add ANTHROPIC_API_KEY
+python -m scripts.seed --recreate --limit 2000       # 2k real Irvine parcels
+uvicorn app.main:app --reload --port 8003
 
-# 4. Seed 2,000 real Irvine parcels from OC Public Works ArcGIS
-python -m scripts.seed --recreate --limit 2000
-# Or scope to a different area:
-python -m scripts.seed --recreate --where "SITE_ADDRESS LIKE '%NEWPORT BEACH%'" --limit 5000
-
-# 5. Run
-uvicorn app.main:app --reload --port 8000
+cd web && npm install && npm run dev                 # http://localhost:3003
 ```
 
-Then either curl:
+Optional Langfuse setup is in [docs/langfuse.md](docs/langfuse.md) — drop two keys in `.env` and every query produces a tagged trace with token counts, latency, costs, and judge scores.
 
-```bash
-curl -X POST http://localhost:8003/api/v1/query \
-  -H "Content-Type: application/json" \
-  -d '{"query": "Who owns parcel 461-211-62?"}'
+---
+
+## Screenshots
+
+<!--
+Add these three screenshots (PNG, ~1200px wide) into docs/screenshots/:
+  1. chat-ui.png        — the chat UI showing a query + answer + agent trace timeline + citation chips
+  2. langfuse-trace.png — a single Langfuse trace waterfall (router → retrieval → summarize → ChatAnthropic)
+  3. langfuse-filtered.png — the traces list filtered by tag (e.g. source:live_arcgis_fallback)
+-->
+
+| Chat UI streaming | Langfuse trace waterfall |
+|---|---|
+| ![Chat UI](docs/screenshots/chat-ui.png) | ![Langfuse trace](docs/screenshots/langfuse-trace.png) |
+
+| Tag filter: live ArcGIS fallback rate |
+|---|
+| ![Tag filter](docs/screenshots/langfuse-filtered.png) |
+
+---
+
+## How it works
+
+### System architecture
+
+```mermaid
+graph TB
+    User([User]) -->|natural-language query| Web[Next.js 16 chat UI]
+    Web -->|SSE stream| API[FastAPI gateway]
+    API --> Sup[LangGraph supervisor]
+
+    Sup -->|router + summarize LLM| Claude[(Claude Sonnet 4.6)]
+    Sup --> Hybrid{Hybrid retrieval}
+
+    Hybrid -->|APN regex match| QdrantID[(Qdrant<br>retrieve by ID)]
+    Hybrid -->|street + semantic| QdrantHy[(Qdrant<br>dense + BM25 RRF)]
+    Hybrid -->|owner name| Neo4j[(Neo4j<br>owner graph)]
+    Hybrid -.->|local miss| Live[OC ArcGIS<br>live FeatureServer]
+
+    QdrantID --> Pg[(Postgres<br>cached parcels)]
+    QdrantHy --> Pg
+    Neo4j --> Pg
+    Live --> Pg
+
+    API -.->|trace + tags + scores| LF[(Langfuse)]
+    Eval[scripts/eval.py via evalkit] -.->|trace + scores| LF
 ```
 
-…or launch the chat UI:
+### Agent flow
 
-```powershell
-cd web
-npm install
-npm run dev      # http://localhost:3003
+```mermaid
+graph LR
+    START([START]) --> R{router}
+    R -->|unknown| END([END])
+    R -->|compare| Cmp[comparison]
+    R -->|lookup / summarize<br>title_chain / portfolio| Ret[retrieval]
+    Ret --> Sum[summarize]
+    Cmp --> Sum
+    Sum --> END
 ```
 
-The UI streams the agent's progress node-by-node — router → retrieval → summarize — and renders retrieved parcels + title chain in a side panel.
+The router emits structured JSON `{intent, owner_name?}` and tags the trace with `intent:<value>`. The retrieval node then picks one of four sub-paths and tags `source:<value>`:
 
-### Optional: Langfuse tracing
+| `intent` | Retrieval path | Why |
+|---|---|---|
+| `lookup` / `summarize` / `title_chain` with APN in query | Qdrant `retrieve(by_id)` | Fast O(1) lookup; semantic search is wrong for IDs |
+| `lookup` / `summarize` with address | BM25 + dense via Qdrant RRF | Sparse rescues proper nouns; dense rescues paraphrases |
+| `portfolio` | Neo4j `owner_holdings` | The graph IS the right data structure here |
+| Any of the above with no local match | Live OC ArcGIS FeatureServer | Reaches the full 702k parcels |
 
-Tracing is opt-in. Sign up at [langfuse.com](https://langfuse.com) (free tier — 50k events/mo), grab a project's public + secret keys, drop them into `.env`:
+The live fallback uses a relevance heuristic — hybrid search _always_ returns top-k, so `if not parcels:` never fires for out-of-seed addresses. Instead we check whether the query's house-number actually appears in any returned parcel's address, and only then hit the live API.
 
+### Eval-driven dev loop
+
+```mermaid
+graph LR
+    Q[Production query] -->|tagged trace| LF[(Langfuse)]
+    Golden[16-case golden set] --> Eval[scripts/eval.py]
+    Eval -->|tagged eval traces| LF
+    Eval -->|judge: Sonnet 4.6| Scores[faithfulness<br>answer_relevance]
+    Scores -->|attach to trace| LF
+    Eval -->|markdown report| Reports[evals/reports/]
+    UI[Chat UI thumbs] -->|user_feedback| LF
+    LF -->|filter low scores| Diag[Diagnose]
+    Diag --> Fix[Prompt + code fix]
+    Fix --> Eval
 ```
-LANGFUSE_PUBLIC_KEY=pk-lf-...
-LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://us.cloud.langfuse.com   # or https://cloud.langfuse.com for EU
-```
 
-Restart the API. Every `/api/v1/query` invocation now produces a trace with one span per LangGraph node (router → retrieval → summarize) and a child generation span per Claude API call with token counts + latency.
+The eval has surfaced three real bugs so far — a hallucinated URL, speculative transfer characterization, and a bug in the eval itself where the judge wasn't receiving the title chain as context. Each fix is in git history with the before/after report. See [`evals/reports/`](evals/reports/).
 
-Each trace is also tagged so you can filter the dashboards:
+---
 
-  | tag | when |
-  |---|---|
-  | `intent:lookup` / `:portfolio` / `:title_chain` / ... | set by the router |
-  | `source:apn_fast_path` / `:hybrid_search` / `:live_arcgis_fallback` / `:neo4j_owner_holdings` | set by the retrieval node |
-  | `eval` + `case:<id>` | set when run via `scripts/eval.py` |
+## What's interesting
 
-`/api/v1/query` returns the Langfuse `trace_id` in its response, and the chat UI surfaces a 👍 / 👎 row under each answer that POSTs `/api/v1/feedback` — landing in Langfuse as a `user_feedback` score on that same trace. The eval suite (`make eval`) also writes `faithfulness`, `answer_relevance`, and the programmatic scores back as Langfuse scores per case, so you can filter "show me every trace where faithfulness < 8" inside the project UI.
+- **Hybrid retrieval that actually works on proper nouns.** Pure dense retrieval kept finding "Irvine Ave in Newport Beach" when the user asked for "Bridgeport Rd in Irvine" — the token `Irvine` is everywhere, the rarer `Bridgeport` doesn't carry enough similarity weight. Adding Qdrant's BM25 sparse vectors + Reciprocal Rank Fusion fixed it; the sparse leg rescues exact-token queries that dense drops.
 
-Leaving the keys blank disables tracing — `app/observability.py` returns a no-op handler and there's zero runtime cost.
+- **Live ArcGIS fallback with a relevance heuristic.** Hybrid search always returns top-k by similarity, not threshold, so `if not parcels:` never fires for out-of-seed addresses. The retrieval node checks "did any returned parcel's address actually contain the query's house number?" If no, fall back to the live OC Public Works FeatureServer (~500ms cache miss), enrich with synthetic owner data, return.
+
+- **Provenance flagging end-to-end.** The OC public ArcGIS layers redact owner names — real assessor data is behind a $3k/yr paywall (ParcelQuest, ATTOM, etc.). So owners are synthetic, deterministically generated per-APN. Crucially, every parcel carries `owner_source: "synthetic"`, the summarize prompt appends an italic disclaimer when synthetic data is in the context, and the UI shows an amber `synthetic` chip in the side panel. When a real provider is wired in, flip the tag and the disclaimer disappears automatically.
+
+- **Model selection by data, not vibes.** Ran the 16-case suite against Haiku 4.5 / Sonnet 4.6 / Opus 4.7 with a fixed judge:
+
+  | metric | Haiku 4.5 | Sonnet 4.6 | Opus 4.7 |
+  |---|---|---|---|
+  | `intent_accuracy` | 1.00 | 0.94 | 1.00 |
+  | `faithfulness` | 9.78 | **9.91** | 9.84 |
+  | `answer_relevance` | 6.44 | **6.88** | 6.81 |
+
+  Opus underperformed Sonnet on both judge-scored dimensions. Picked Sonnet. Haiku is a viable cost-down option (lags by ~0.4 on relevance, matches Opus on routing).
+
+- **Langfuse + evalkit bridge.** Every eval case produces a Langfuse trace tagged `eval` + `case:<id>`; faithfulness, answer_relevance, intent_accuracy, citation_recall, citation_precision, refusal_correctness all attach as Langfuse scores on the same trace. Filter `scores.faithfulness < 8` in the dashboard → drill straight to the specific run + the agent's actual node-by-node trace that scored poorly. That's the eval-driven debugging loop with a UI on it.
+
+- **Three bugs the eval caught:**
+  1. Agent invented `ocassessor.gov` → tightened prompt against external resources.
+  2. Title chain answers characterized transfers ("arm's-length", "inter-family") → tightened prompt against speculation.
+  3. Judge was getting parcels but not graph_facts as context → it correctly flagged every title-chain claim as ungrounded → fixed the eval's context formatter. Faithfulness 8.46 → 9.96.
+
+---
 
 ## Project layout
 
 ```
 app/
-  main.py                FastAPI app + lifespan hooks
-  config.py              pydantic-settings
-  agents/
-    state.py             LangGraph AgentState TypedDict
-    supervisor.py        StateGraph + router/retrieval/comparison/summarize nodes
-    tools.py             @tool wrappers over service-layer queries
-  routers/
-    query.py             /query and /query/stream (SSE)
-    health.py            /health
-  services/
-    db.py                Async Postgres session
-    vector.py            Qdrant client (pluggable embedder)
-    graph.py             Neo4j driver + Cypher queries
-  ingestion/
-    oc_assessor.py       Scraper stub (synthetic for now)
-  models/
-    parcel.py            SQLAlchemy: Parcel, TitleTransfer
-  schemas/
-    query.py             Request/response Pydantic models
+  agents/       LangGraph supervisor + tools + state
+  routers/      /query (JSON + SSE), /feedback, /health
+  services/     vector (Qdrant), graph (Neo4j), db (Postgres), live_arcgis
+  ingestion/    arcgis_parcels (real), synthetic_owners (placeholder for paywall)
+  observability.py     Langfuse callback factory + tag accumulator
+  config.py     pydantic-settings
 scripts/
-  seed.py                Seed all three data stores
-tests/
-  test_supervisor.py     Router classification + node wiring
-  test_graph_normalize.py Owner-name normalization
-  test_sparse.py         Tokenizer + BM25 sparse vector building
-  test_synthetic_owners.py  Synthetic title-chain invariants
-  test_citations.py      APN extraction from answer text
+  seed.py       OC ArcGIS → Postgres + Qdrant + Neo4j
+  eval.py       Run golden set, score with evalkit, attach to Langfuse
+  sweep.py      Model comparison across Haiku/Sonnet/Opus
+evals/
+  golden.yaml             16-case spec
+  reports/*.md            Per-run reports (latest, sweep, provenance debug)
 web/
-  src/app/
-    page.tsx             Server component: header + Chat shell
-    components/
-      Chat.tsx           Streaming chat client component
-      AgentTrace.tsx     Per-node status timeline
-      ParcelList.tsx     Retrieved parcels side panel
-      TitleChain.tsx     Title-chain side panel
-    lib/api.ts           SSE stream parser (custom — no extra deps)
+  src/app/components/     Chat / AgentTrace / ParcelList / TitleChain
+  src/lib/api.ts          SSE parser + feedback POST
+tests/                    37 tests covering routing, normalization, sparse vectors, citations, synthetic chains, fallback heuristic
 ```
+
+---
 
 ## Roadmap
 
-**Weekend 1 — Data + Retrieval**
-- [x] Project skeleton + docker-compose
-- [x] Pluggable embedder + Qdrant collection bootstrap
-- [x] Neo4j schema + owner-name normalization
-- [x] OC Public Works ArcGIS ingestion — 2,000 Irvine parcels seeded; 702k available
-- [x] sentence-transformers (all-MiniLM-L6-v2) real embeddings
-- [x] Hybrid retrieval: APN-regex fast path → BM25 + dense fused via Reciprocal Rank Fusion
-- [x] Synthetic owner + title-chain generator (assessor data is paywalled — see `app/ingestion/synthetic_owners.py` for the swap path to a real provider)
-- [x] Neo4j seeding: Owner ↔ Parcel ↔ TRANSFERRED graph with temporally-consistent chains
+- [x] Real OC ArcGIS ingestion (2k Irvine seed; 702k live-fallback reachable)
+- [x] Hybrid retrieval (BM25 + dense + RRF + APN fast-path)
+- [x] Owner + title-chain graph with synthetic provenance flagging
+- [x] 5-intent LangGraph supervisor (lookup, compare, summarize, title_chain, portfolio)
+- [x] FastAPI + SSE + Next.js streaming UI with thumbs feedback
+- [x] evalkit-powered 16-case scorecard
+- [x] Model comparison sweep
+- [x] Langfuse observability (tags, scores, trace-id round-trip)
+- [ ] Real owner provider (ATTOM / ParcelQuest swap path; interface is provider-agnostic)
+- [ ] 30+ case eval coverage
+- [ ] Public deployment (Vercel + Railway + managed DBs)
+- [ ] Loom architecture walkthrough
 
-**Weekend 2 — Agents**
-- [x] LangGraph supervisor with router/retrieval/comparison/summarize
-- [x] Four tools wired to data layer
-- [x] FastAPI /query + /query/stream (SSE)
-- [x] APN-grounded citations (regex-extracted from answer text)
-- [x] Next.js 16 + React 19 + Tailwind 4 chat UI with live agent trace
-- [x] Langfuse observability (opt-in via env vars; agent path traced)
-
-**Weekend 3 — Eval + Polish**
-- [x] [evalkit](../evalkit) integration: G-Eval faithfulness + answer relevance via LLM-as-judge
-- [x] 16-case golden set + programmatic intent/citation/refusal metrics
-- [x] Markdown report generator, `make eval` target
-- [x] Model comparison sweep: Haiku 4.5 vs Sonnet 4.6 vs Opus 4.7 (`make sweep`)
-- [ ] Expand to 30+ cases
-- [ ] Loom demo + architecture diagram
-
-## Model selection — what the data said
-
-Ran the 16-case golden set against three Claude models, fixed judge (Sonnet 4.6):
-
-| metric | `claude-haiku-4-5-20251001` | `claude-sonnet-4-6` | `claude-opus-4-7` |
-|---|---|---|---|
-| `intent_accuracy` | **1.00** | 0.94 | **1.00** |
-| `citation_recall` | 1.00 | 1.00 | 1.00 |
-| `citation_precision` | 1.00 | 1.00 | 1.00 |
-| `refusal_correctness` | 1.00 | 1.00 | 1.00 |
-| `faithfulness` | 9.78 | **9.91** | 9.84 |
-| `answer_relevance` | 6.44 | **6.88** | 6.81 |
-
-**Picked Sonnet 4.6** as the production model. Opus offered no measurable lift on faithfulness or answer relevance — it actually slightly underperformed Sonnet on both judge-scored dimensions. Haiku is viable as a cost-down option if needed (lags Sonnet by ~0.4 points on relevance), and notably matched Opus on intent routing. See [`evals/reports/`](evals/reports/) for the full sweep.
-
-## Eval results
-
-16-case golden set, judged by Claude Sonnet 4.6 via [evalkit](../evalkit).
-
-| metric | score |
-|---|---|
-| `intent_accuracy` | 0.94 |
-| `citation_recall` | 1.00 |
-| `citation_precision` | 1.00 |
-| `refusal_correctness` | 1.00 |
-| `faithfulness` | **9.94** / 10 |
-| `answer_relevance` | 6.81 / 10 |
-| total judge cost | $0.07 |
-
-Findings the eval surfaced as the system evolved:
-
-1. **First run** — Faithfulness 9.54. Agent invented a URL (`ocassessor.gov`) on
-   owner queries. Tightened the summarize prompt to forbid invented external
-   resources.
-2. **Owner data added** — Faithfulness dropped to 8.46 because the title-chain
-   answers picked up speculation ("may indicate an arm's-length transaction").
-   Added explicit "no interpretation, no characterization" rules to the prompt.
-3. **Bug in the eval itself** — Faithfulness still 8.69 because the judge wasn't
-   getting `graph_facts` as part of its context, so it correctly flagged
-   every title-chain fact as ungrounded. Fixed `_format_context`; faithfulness
-   jumped to **9.96**.
-
-See [`evals/reports/`](evals/reports/) for full per-case detail.
-
-## Technologies
-
-`LangGraph` · `LangChain` · `Claude Sonnet 4.6` · `FastAPI` · `Qdrant` · `Neo4j` · `Postgres` · `SQLAlchemy 2 async` · `Pydantic v2` · `SSE` · `pytest-asyncio` · `sentence-transformers`
+---
 
 ## License
 

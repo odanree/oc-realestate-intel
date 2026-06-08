@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# Repo metadata
+.git/
+.github/
+.idea/
+.vscode/
+.DS_Store
+
+# Local-only files
+.env
+.env.local
+docs/screenshots/*.png
+
+# The web app builds in its own Dockerfile
+web/
+
+# Eval reports (large, regenerated)
+evals/reports/*.md
+!evals/reports/2026-06-07-sweep.md
+
+# README + assets — keep these small in the API image
+docs/

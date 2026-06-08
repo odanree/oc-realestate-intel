@@ -47,7 +47,32 @@ async def main() -> None:
     parser.add_argument("--no-embeddings", action="store_true", help="Use zero embedder")
     parser.add_argument("--no-graph", action="store_true", help="Skip Neo4j seed")
     parser.add_argument("--recreate", action="store_true", help="Drop & recreate everything")
+    parser.add_argument(
+        "--skip-if-seeded",
+        action="store_true",
+        help="Exit 0 without seeding if Qdrant already has > --skip-threshold points. "
+             "Production container entrypoint uses this so restarts don't re-seed.",
+    )
+    parser.add_argument("--skip-threshold", type=int, default=100)
     args = parser.parse_args()
+
+    if args.skip_if_seeded:
+        try:
+            await vector_service.ensure_collection()
+            count = await vector_service.collection_point_count()
+            if count is not None and count > args.skip_threshold:
+                log.info(
+                    "seed skipped: Qdrant collection has %d points (> %d threshold)",
+                    count, args.skip_threshold,
+                )
+                await graph_service.close()
+                return
+            log.info(
+                "seed will run: Qdrant collection has %s points (<= %d threshold)",
+                count if count is not None else "?", args.skip_threshold,
+            )
+        except Exception as e:
+            log.warning("skip-if-seeded probe failed (%s) — proceeding with seed", e)
 
     if not args.no_embeddings:
         log.info("Loading sentence-transformers (first run will download model)...")

@@ -139,6 +139,19 @@ async def ensure_collection() -> None:
         log.info("Created Qdrant collection %s (dense + sparse)", settings.qdrant_collection)
 
 
+async def collection_point_count() -> int | None:
+    """Return the current point count in the parcels collection, or None
+    if the collection doesn't exist yet (caller probably needs to ensure_collection first).
+    """
+    client = _get_client()
+    try:
+        info = await client.get_collection(collection_name=settings.qdrant_collection)
+        return info.points_count or 0
+    except Exception as e:
+        log.warning("collection_point_count probe failed: %s", e)
+        return None
+
+
 async def recreate_collection() -> None:
     """Drop and recreate the collection — used by `seed --recreate`."""
     client = _get_client()

@@ -18,6 +18,8 @@ venv/
 .env.local
 data/raw/
 data/parcels/
+# data/oc-parcels.json.gz IS committed — it's how prod seeds (Hetzner can't reach ocgis.com)
+!data/oc-parcels.json.gz
 *.sqlite3
 *.db
 

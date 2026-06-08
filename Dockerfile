@@ -68,6 +68,9 @@ COPY --from=builder /root/.cache /root/.cache
 COPY app ./app
 COPY scripts ./scripts
 COPY evals ./evals
+# Snapshot of ~10k OC parcels — generated locally by scripts/snapshot_parcels.py
+# because the Hetzner VPS can't reach www.ocgis.com directly.
+COPY data ./data
 
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

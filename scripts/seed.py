@@ -26,6 +26,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.ingestion.arcgis_parcels import stream_parcels
+from app.ingestion.snapshot import snapshot_parcels_if_present
 from app.ingestion.synthetic_owners import generate_for_parcels
 from app.models.parcel import Base, Parcel
 from app.services import graph as graph_service
@@ -109,7 +110,18 @@ async def main() -> None:
                     log.info("upserted=%d", upserted)
             await session.commit()
 
-    await consume(_enrich(stream_parcels(where=args.where, limit=args.limit)))
+    # In production the Hetzner VPS can't reach www.ocgis.com (geo-blocked).
+    # If a snapshot exists, use it instead of streaming live. The dev path
+    # still hits the live API when no snapshot is present.
+    snapshot_stream = snapshot_parcels_if_present(limit=args.limit)
+    if snapshot_stream is not None:
+        log.info("seeding from snapshot (live ArcGIS skipped)")
+        source = snapshot_stream
+    else:
+        log.info("seeding from live ArcGIS (no snapshot found)")
+        source = stream_parcels(where=args.where, limit=args.limit)
+
+    await consume(_enrich(source))
 
     await graph_service.close()
     log.info("seed complete: upserted=%d parcels", upserted)

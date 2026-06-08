@@ -1,7 +1,10 @@
-.PHONY: install up down seed seed-fresh test eval eval-fast api
+.PHONY: install install-web up down seed seed-fresh test eval eval-fast api web
 
 install:
 	python -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev,embeddings]" && .venv/Scripts/python -m pip install -e ../evalkit[anthropic]
+
+install-web:
+	cd web && npm install
 
 up:
 	docker compose up -d
@@ -26,3 +29,6 @@ eval-fast:
 
 api:
 	.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload
+
+web:
+	cd web && npm run dev

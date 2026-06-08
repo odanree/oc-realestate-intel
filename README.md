@@ -66,13 +66,23 @@ python -m scripts.seed --recreate --where "SITE_ADDRESS LIKE '%NEWPORT BEACH%'" 
 uvicorn app.main:app --reload --port 8000
 ```
 
-Then:
+Then either curl:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/query \
+curl -X POST http://localhost:8003/api/v1/query \
   -H "Content-Type: application/json" \
-  -d '{"query": "What does Irvine Company own in 92614?"}'
+  -d '{"query": "Who owns parcel 461-211-62?"}'
 ```
+
+…or launch the chat UI:
+
+```powershell
+cd web
+npm install
+npm run dev      # http://localhost:3003
+```
+
+The UI streams the agent's progress node-by-node — router → retrieval → summarize — and renders retrieved parcels + title chain in a side panel.
 
 ## Project layout
 
@@ -102,6 +112,18 @@ scripts/
 tests/
   test_supervisor.py     Router classification + node wiring
   test_graph_normalize.py Owner-name normalization
+  test_sparse.py         Tokenizer + BM25 sparse vector building
+  test_synthetic_owners.py  Synthetic title-chain invariants
+  test_citations.py      APN extraction from answer text
+web/
+  src/app/
+    page.tsx             Server component: header + Chat shell
+    components/
+      Chat.tsx           Streaming chat client component
+      AgentTrace.tsx     Per-node status timeline
+      ParcelList.tsx     Retrieved parcels side panel
+      TitleChain.tsx     Title-chain side panel
+    lib/api.ts           SSE stream parser (custom — no extra deps)
 ```
 
 ## Roadmap
@@ -121,8 +143,8 @@ tests/
 - [x] Four tools wired to data layer
 - [x] FastAPI /query + /query/stream (SSE)
 - [x] APN-grounded citations (regex-extracted from answer text)
+- [x] Next.js 16 + React 19 + Tailwind 4 chat UI with live agent trace
 - [ ] LangSmith / Langfuse tracing
-- [ ] Next.js 15 chat UI
 
 **Weekend 3 — Eval + Polish**
 - [x] [evalkit](../evalkit) integration: G-Eval faithfulness + answer relevance via LLM-as-judge

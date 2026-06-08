@@ -20,3 +20,13 @@ data/raw/
 data/parcels/
 *.sqlite3
 *.db
+
+# Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/dist/
+web/.env.local
+web/next-env.d.ts
+web/.vercel/
+web/.turbo/

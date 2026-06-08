@@ -84,6 +84,20 @@ npm run dev      # http://localhost:3003
 
 The UI streams the agent's progress node-by-node — router → retrieval → summarize — and renders retrieved parcels + title chain in a side panel.
 
+### Optional: Langfuse tracing
+
+Tracing is opt-in. Sign up at [langfuse.com](https://langfuse.com) (free tier — 50k events/mo), grab a project's public + secret keys, drop them into `.env`:
+
+```
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://us.cloud.langfuse.com   # or https://cloud.langfuse.com for EU
+```
+
+Restart the API. Every `/api/v1/query` invocation now produces a trace with one span per LangGraph node (router → retrieval → summarize) and a child generation span per Claude API call with token counts + latency.
+
+Leaving the keys blank disables tracing — `app/observability.py` returns a no-op handler and there's zero runtime cost.
+
 ## Project layout
 
 ```
@@ -144,7 +158,7 @@ web/
 - [x] FastAPI /query + /query/stream (SSE)
 - [x] APN-grounded citations (regex-extracted from answer text)
 - [x] Next.js 16 + React 19 + Tailwind 4 chat UI with live agent trace
-- [ ] LangSmith / Langfuse tracing
+- [x] Langfuse observability (opt-in via env vars; agent path traced)
 
 **Weekend 3 — Eval + Polish**
 - [x] [evalkit](../evalkit) integration: G-Eval faithfulness + answer relevance via LLM-as-judge

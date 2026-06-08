@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     attom_api_key: str = Field(default="", alias="ATTOM_API_KEY")
     zillow_api_key: str = Field(default="", alias="ZILLOW_API_KEY")
 
+    # Langfuse — empty values disable tracing (no-op handler).
+    langfuse_public_key: str = Field(default="", alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: str = Field(default="", alias="LANGFUSE_SECRET_KEY")
+    langfuse_host: str = Field(default="https://us.cloud.langfuse.com", alias="LANGFUSE_HOST")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
 

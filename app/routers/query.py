@@ -11,6 +11,7 @@ import logging
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
 
+from app import observability
 from app.agents.supervisor import get_graph
 from app.schemas.query import Citation, QueryRequest, QueryResponse
 
@@ -22,7 +23,8 @@ router = APIRouter(prefix="/api/v1", tags=["query"])
 async def query(req: QueryRequest) -> QueryResponse:
     """Synchronous one-shot query."""
     graph = get_graph()
-    final = await graph.ainvoke({"query": req.query})
+    config = _trace_config(req.query)
+    final = await graph.ainvoke({"query": req.query}, config=config)
     return QueryResponse(
         answer=final.get("answer", ""),
         intent=final.get("intent", "unknown"),
@@ -34,10 +36,11 @@ async def query(req: QueryRequest) -> QueryResponse:
 async def query_stream(q: str) -> EventSourceResponse:
     """SSE stream — emits intent, retrieval count, then incremental answer tokens."""
     graph = get_graph()
+    config = _trace_config(q)
 
     async def event_gen():
         try:
-            async for chunk in graph.astream({"query": q}, stream_mode="updates"):
+            async for chunk in graph.astream({"query": q}, stream_mode="updates", config=config):
                 # Each chunk is {node_name: state_delta}
                 for node, delta in chunk.items():
                     yield {
@@ -61,3 +64,15 @@ def _serializable(delta: dict) -> dict:
             continue
         out[k] = v
     return out
+
+
+def _trace_config(query: str) -> dict:
+    """Attach Langfuse callbacks + a friendly trace name. No-op if disabled."""
+    callbacks = observability.callbacks()
+    if not callbacks:
+        return {}
+    return {
+        "callbacks": callbacks,
+        "run_name": "oci.query",
+        "metadata": {"query": query[:200]},
+    }

@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import observability
 from app.config import settings
 from app.routers import health, query
 from app.services import graph as graph_service
@@ -28,7 +29,10 @@ async def lifespan(app: FastAPI):
         await graph_service.ensure_constraints()
     except Exception as e:
         log.warning("Startup data-store init failed (continuing anyway): %s", e)
+    # Warm Langfuse handler so the first query doesn't pay init latency.
+    observability.get_langchain_handler()
     yield
+    observability.flush()
     await graph_service.close()
 
 

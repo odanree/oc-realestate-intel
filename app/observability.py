@@ -11,9 +11,18 @@ captured as a span on the same trace, with token counts and latency.
 
 from __future__ import annotations
 
+import contextvars
 import logging
+from contextlib import contextmanager
 
 from app.config import settings
+
+# Per-trace tag accumulator. tag_trace() appends here; trace_span() flushes
+# the accumulated set onto the root span as a JSON list at exit. We can't
+# accumulate via OTel attributes alone because set_attribute overwrites.
+_tag_acc: contextvars.ContextVar[list[str] | None] = contextvars.ContextVar(
+    "trace_tag_acc", default=None,
+)
 
 log = logging.getLogger(__name__)
 
@@ -94,52 +103,83 @@ def _client():
         return None
 
 
-def start_trace_span(name: str, input_data: dict | None = None):
-    """Open a Langfuse span and return (span, trace_id). Returns (None, None)
-    if tracing is disabled. The returned span must be `.end()`-ed when done.
+@contextmanager
+def trace_span(name: str, input_data: dict | None = None):
+    """Context manager that opens a Langfuse span AS THE ACTIVE OTel context
+    and yields its trace_id. Yields None when tracing is disabled.
 
-    Uses the v4+ start_observation API; the returned LangfuseSpan exposes
-    `.trace_id` synchronously so we can ship it back to the caller before
-    the agent has even started running.
+    Why as-current matters: subsequent `update_current_trace` calls (tags +
+    metadata stamped from inside LangGraph nodes) and the LangChain callback
+    handler both look up the active OTel context. If the outer span isn't
+    current, tags vanish and the callback creates a *separate* trace —
+    which is exactly what happened the first time around.
+
+    Usage:
+        with observability.trace_span("oci.query", {"query": q}) as trace_id:
+            result = await graph.ainvoke(state, config=...)
     """
     client = _client()
     if client is None:
-        return None, None
-    try:
-        span = client.start_observation(name=name, as_type="span", input=input_data)
-        return span, span.trace_id
-    except Exception as e:
-        log.warning("Langfuse start_trace_span failed: %s", e)
-        return None, None
-
-
-def end_span(span) -> None:
-    """End a span returned by start_trace_span. No-op when span is None."""
-    if span is None:
+        yield None
         return
     try:
-        span.end()
+        import json
+
+        from opentelemetry.trace import get_current_span
+        with client.start_as_current_observation(
+            name=name, as_type="span", input=input_data,
+        ) as span:
+            token = _tag_acc.set([])
+            try:
+                yield span.trace_id
+            finally:
+                tags = _tag_acc.get() or []
+                if tags:
+                    cur = get_current_span()
+                    if cur is not None and cur.is_recording():
+                        cur.set_attribute(
+                            "langfuse.trace.tags", json.dumps(tags),
+                        )
+                _tag_acc.reset(token)
     except Exception as e:
-        log.warning("Langfuse span.end() failed: %s", e)
+        log.warning("Langfuse trace_span failed: %s", e)
+        yield None
 
 
 def tag_trace(tags: list[str] | None = None, metadata: dict | None = None) -> None:
-    """Add tags + metadata to whatever trace is currently active.
+    """Add tags + metadata to the currently active trace.
 
-    Safe to call from anywhere inside a LangChain callback context (the
-    Langfuse SDK tracks the active trace via OpenTelemetry-style context).
+    Langfuse v4 doesn't expose a Python `update_current_trace`, so we write
+    OTel span attributes on the active span; the Langfuse exporter maps
+    `langfuse.trace.tags` / `langfuse.trace.metadata.<k>` onto the trace
+    when the span is flushed. Tags accumulate across calls.
+
     No-op when tracing is disabled.
     """
     client = _client()
     if client is None:
         return
     try:
-        kwargs: dict = {}
+        import json
+
+        from opentelemetry.trace import get_current_span
         if tags:
-            kwargs["tags"] = tags
+            # Accumulate — the actual OTel attribute is written once on span exit
+            # by trace_span(). set_attribute overwrites, so we can't append here.
+            acc = _tag_acc.get()
+            if acc is not None:
+                for t in tags:
+                    if t not in acc:
+                        acc.append(t)
         if metadata:
-            kwargs["metadata"] = metadata
-        client.update_current_trace(**kwargs)
+            span = get_current_span()
+            if span is None or not span.is_recording():
+                return
+            for k, v in metadata.items():
+                if v is None:
+                    continue
+                payload = v if isinstance(v, (str, int, float, bool)) else json.dumps(v, default=str)
+                span.set_attribute(f"langfuse.trace.metadata.{k}", payload)
     except Exception as e:
         log.warning("Langfuse tag_trace failed: %s", e)
 

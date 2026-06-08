@@ -91,17 +91,15 @@ async def _run_case(graph, case: dict) -> dict:
         "tags": ["eval", f"case:{case.get('id')}"],
     } if callbacks else {}
 
-    # Wrap the agent call in an explicit Langfuse span so we have a definite
-    # trace_id to attach scores to. start_trace_span returns (None, None)
-    # when tracing is disabled, so the rest of the code branches naturally.
-    span, trace_id = observability.start_trace_span(
+    # Wrap each case in a Langfuse span SO THAT it becomes the active OTel
+    # context — required for the LangChain callback to nest under it and
+    # for `update_current_trace` tag calls inside the supervisor to land
+    # on this trace.
+    with observability.trace_span(
         f"eval.{case.get('id', 'case')}",
         {"query": case["query"], "expected_intent": case.get("expected_intent")},
-    )
-    try:
+    ) as trace_id:
         state = await graph.ainvoke({"query": case["query"]}, config=config)
-    finally:
-        observability.end_span(span)
 
     answer = state.get("answer", "")
     intent = state.get("intent", "unknown")

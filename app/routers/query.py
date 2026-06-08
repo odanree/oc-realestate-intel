@@ -29,11 +29,8 @@ async def query(req: QueryRequest) -> QueryResponse:
     """Synchronous one-shot query."""
     graph = get_graph()
     config = _trace_config(req.query)
-    span, trace_id = observability.start_trace_span("oci.query", {"query": req.query})
-    try:
+    with observability.trace_span("oci.query", {"query": req.query}) as trace_id:
         final = await graph.ainvoke({"query": req.query}, config=config)
-    finally:
-        observability.end_span(span)
     return QueryResponse(
         answer=final.get("answer", ""),
         intent=final.get("intent", "unknown"),
@@ -47,24 +44,22 @@ async def query_stream(q: str) -> EventSourceResponse:
     """SSE stream — emits intent, retrieval count, then incremental answer tokens."""
     graph = get_graph()
     config = _trace_config(q)
-    span, trace_id = observability.start_trace_span("oci.query", {"query": q})
 
     async def event_gen():
         try:
-            async for chunk in graph.astream({"query": q}, stream_mode="updates", config=config):
-                for node, delta in chunk.items():
-                    yield {
-                        "event": node,
-                        "data": json.dumps(_serializable(delta)),
-                    }
-                await asyncio.sleep(0)
-            yield {"event": "trace", "data": json.dumps({"trace_id": trace_id})}
-            yield {"event": "done", "data": "{}"}
+            with observability.trace_span("oci.query", {"query": q}) as trace_id:
+                async for chunk in graph.astream({"query": q}, stream_mode="updates", config=config):
+                    for node, delta in chunk.items():
+                        yield {
+                            "event": node,
+                            "data": json.dumps(_serializable(delta)),
+                        }
+                    await asyncio.sleep(0)
+                yield {"event": "trace", "data": json.dumps({"trace_id": trace_id})}
+                yield {"event": "done", "data": "{}"}
         except Exception as e:
             log.exception("query stream failed")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
-        finally:
-            observability.end_span(span)
 
     return EventSourceResponse(event_gen())
 

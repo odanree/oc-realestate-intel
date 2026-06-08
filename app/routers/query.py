@@ -13,7 +13,12 @@ from sse_starlette.sse import EventSourceResponse
 
 from app import observability
 from app.agents.supervisor import get_graph
-from app.schemas.query import Citation, QueryRequest, QueryResponse
+from app.schemas.query import (
+    Citation,
+    FeedbackRequest,
+    QueryRequest,
+    QueryResponse,
+)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["query"])
@@ -24,11 +29,16 @@ async def query(req: QueryRequest) -> QueryResponse:
     """Synchronous one-shot query."""
     graph = get_graph()
     config = _trace_config(req.query)
-    final = await graph.ainvoke({"query": req.query}, config=config)
+    span, trace_id = observability.start_trace_span("oci.query", {"query": req.query})
+    try:
+        final = await graph.ainvoke({"query": req.query}, config=config)
+    finally:
+        observability.end_span(span)
     return QueryResponse(
         answer=final.get("answer", ""),
         intent=final.get("intent", "unknown"),
         citations=[Citation(**c) for c in final.get("citations", [])],
+        trace_id=trace_id,
     )
 
 
@@ -37,23 +47,43 @@ async def query_stream(q: str) -> EventSourceResponse:
     """SSE stream — emits intent, retrieval count, then incremental answer tokens."""
     graph = get_graph()
     config = _trace_config(q)
+    span, trace_id = observability.start_trace_span("oci.query", {"query": q})
 
     async def event_gen():
         try:
             async for chunk in graph.astream({"query": q}, stream_mode="updates", config=config):
-                # Each chunk is {node_name: state_delta}
                 for node, delta in chunk.items():
                     yield {
                         "event": node,
                         "data": json.dumps(_serializable(delta)),
                     }
-                await asyncio.sleep(0)  # cooperative yield
+                await asyncio.sleep(0)
+            yield {"event": "trace", "data": json.dumps({"trace_id": trace_id})}
             yield {"event": "done", "data": "{}"}
         except Exception as e:
             log.exception("query stream failed")
             yield {"event": "error", "data": json.dumps({"error": str(e)})}
+        finally:
+            observability.end_span(span)
 
     return EventSourceResponse(event_gen())
+
+
+@router.post("/feedback")
+async def feedback(req: FeedbackRequest) -> dict:
+    """Attach a user thumbs-up/down to a Langfuse trace.
+
+    Returns 200 with {ok: true} whether or not tracing is enabled —
+    a thumbs click should never error the UI. When tracing is disabled
+    the call is silently dropped.
+    """
+    observability.create_score(
+        trace_id=req.trace_id,
+        name="user_feedback",
+        value=req.score,
+        comment=req.comment,
+    )
+    return {"ok": True}
 
 
 def _serializable(delta: dict) -> dict:

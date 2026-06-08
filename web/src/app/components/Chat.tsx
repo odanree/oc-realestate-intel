@@ -7,6 +7,7 @@ import {
   Parcel,
   StreamEvent,
   streamQuery,
+  submitFeedback,
 } from "@/lib/api";
 import AgentTrace, { TraceEvent } from "./AgentTrace";
 import ParcelList from "./ParcelList";
@@ -23,6 +24,8 @@ type Turn = {
   graph_facts: GraphFact[];
   trace: TraceEvent[];
   errorMessage?: string;
+  langfuse_trace_id?: string | null;
+  feedback?: 1 | -1;
 };
 
 const EXAMPLES = [
@@ -96,13 +99,30 @@ export default function Chat() {
     submit(input);
   };
 
+  const handleFeedback = useCallback(
+    async (turnId: string, score: 1 | -1) => {
+      const turn = turns.find((t) => t.id === turnId);
+      if (!turn?.langfuse_trace_id || turn.feedback !== undefined) return;
+      // Optimistic update — Langfuse should never error the UX.
+      setTurns((prev) =>
+        prev.map((t) => (t.id === turnId ? { ...t, feedback: score } : t)),
+      );
+      try {
+        await submitFeedback(turn.langfuse_trace_id, score);
+      } catch (e) {
+        console.error("feedback failed", e);
+      }
+    },
+    [turns],
+  );
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 h-[calc(100vh-160px)]">
       <div className="flex flex-col bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
         <div ref={transcriptRef} className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {turns.length === 0 && <EmptyState onPick={submit} />}
           {turns.map((turn) => (
-            <TurnView key={turn.id} turn={turn} />
+            <TurnView key={turn.id} turn={turn} onFeedback={handleFeedback} />
           ))}
         </div>
         <form
@@ -180,6 +200,8 @@ function applyEvent(turn: Turn, evt: StreamEvent): Turn {
           { stage: "summarize", label: "Synthesized answer", t: Date.now() },
         ],
       };
+    case "trace":
+      return { ...turn, langfuse_trace_id: evt.trace_id };
     case "done":
       return { ...turn, status: "done" };
     case "error":
@@ -189,7 +211,13 @@ function applyEvent(turn: Turn, evt: StreamEvent): Turn {
   }
 }
 
-function TurnView({ turn }: { turn: Turn }) {
+function TurnView({
+  turn,
+  onFeedback,
+}: {
+  turn: Turn;
+  onFeedback: (turnId: string, score: 1 | -1) => void;
+}) {
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
@@ -199,22 +227,31 @@ function TurnView({ turn }: { turn: Turn }) {
       </div>
       {turn.intent && <IntentBadge intent={turn.intent} />}
       {turn.answer ? (
-        <div className="max-w-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 px-4 py-3 rounded-2xl rounded-bl-md prose prose-sm dark:prose-invert max-w-none">
-          <Markdownish text={turn.answer} />
-          {turn.citations.length > 0 && (
-            <div className="mt-3 flex flex-wrap gap-2 not-prose">
-              {turn.citations.map((c) => (
-                <a
-                  key={c.apn}
-                  href="#"
-                  className="text-xs font-mono px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-200"
-                >
-                  {c.apn}
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
+        <>
+          <div className="max-w-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 px-4 py-3 rounded-2xl rounded-bl-md prose prose-sm dark:prose-invert max-w-none">
+            <Markdownish text={turn.answer} />
+            {turn.citations.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 not-prose">
+                {turn.citations.map((c) => (
+                  <a
+                    key={c.apn}
+                    href="#"
+                    className="text-xs font-mono px-2 py-1 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-200"
+                  >
+                    {c.apn}
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+          {turn.langfuse_trace_id ? (
+            <FeedbackBar
+              turnId={turn.id}
+              feedback={turn.feedback}
+              onFeedback={onFeedback}
+            />
+          ) : null}
+        </>
       ) : (
         <AgentTrace events={turn.trace} streaming={turn.status === "streaming"} />
       )}
@@ -222,6 +259,54 @@ function TurnView({ turn }: { turn: Turn }) {
         <div className="text-sm text-red-600 dark:text-red-400">
           error: {turn.errorMessage}
         </div>
+      )}
+    </div>
+  );
+}
+
+
+function FeedbackBar({
+  turnId,
+  feedback,
+  onFeedback,
+}: {
+  turnId: string;
+  feedback?: 1 | -1;
+  onFeedback: (turnId: string, score: 1 | -1) => void;
+}) {
+  const base =
+    "text-xs px-2 py-1 rounded-md border transition-colors disabled:cursor-not-allowed";
+  return (
+    <div className="flex items-center gap-1.5 text-xs text-zinc-400 dark:text-zinc-500 ml-1">
+      <span className="text-[10px] uppercase tracking-wider">Helpful?</span>
+      <button
+        type="button"
+        onClick={() => onFeedback(turnId, 1)}
+        disabled={feedback !== undefined}
+        title="Send thumbs up to Langfuse"
+        className={`${base} ${
+          feedback === 1
+            ? "bg-emerald-100 dark:bg-emerald-950 border-emerald-300 dark:border-emerald-700 text-emerald-700 dark:text-emerald-300"
+            : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        }`}
+      >
+        👍
+      </button>
+      <button
+        type="button"
+        onClick={() => onFeedback(turnId, -1)}
+        disabled={feedback !== undefined}
+        title="Send thumbs down to Langfuse"
+        className={`${base} ${
+          feedback === -1
+            ? "bg-rose-100 dark:bg-rose-950 border-rose-300 dark:border-rose-700 text-rose-700 dark:text-rose-300"
+            : "border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+        }`}
+      >
+        👎
+      </button>
+      {feedback !== undefined && (
+        <span className="text-[10px] italic">recorded</span>
       )}
     </div>
   );

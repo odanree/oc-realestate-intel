@@ -20,6 +20,7 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 from langgraph.graph import END, START, StateGraph
 
+from app import observability
 from app.agents.state import AgentState
 from app.agents.tools import ALL_TOOLS
 from app.config import settings
@@ -107,6 +108,10 @@ async def router_node(state: AgentState) -> AgentState:
         "router classified intent=%s owner=%r for query=%r",
         out["intent"], out.get("owner_name"), state["query"][:80],
     )
+    observability.tag_trace(
+        tags=[f"intent:{out['intent']}"],
+        metadata={"owner_name": out.get("owner_name")},
+    )
     return out
 
 
@@ -144,12 +149,16 @@ async def retrieval_node(state: AgentState) -> AgentState:
         owner_name = state.get("owner_name") or query
         from app.agents.tools import owner_holdings
         holdings = await owner_holdings.ainvoke({"owner_name_or_apn": owner_name})
-        # Tag holdings as synthetic so the disclaimer fires.
         for h in holdings:
             h["owner_source"] = "synthetic"
+        observability.tag_trace(
+            tags=["source:neo4j_owner_holdings"],
+            metadata={"holdings_count": len(holdings)},
+        )
         return {"parcels": holdings, "graph_facts": []}
 
     # 1. APN fast path.
+    source = None
     mentioned_apns = _APN_PATTERN.findall(query)
     if mentioned_apns and intent in ("lookup", "summarize", "title_chain"):
         from app.services import vector
@@ -157,11 +166,14 @@ async def retrieval_node(state: AgentState) -> AgentState:
             hit = await vector.get_parcel_by_apn(apn)
             if hit:
                 parcels.append(hit)
+        if parcels:
+            source = "apn_fast_path"
 
     # 2. Hybrid search over seeded set.
     if not parcels and intent in ("lookup", "summarize"):
         from app.agents.tools import parcel_lookup
         parcels = await parcel_lookup.ainvoke({"query": query, "top_k": 5})
+        source = "hybrid_search"
 
     # 3. Live ArcGIS fallback — triggered when the query mentions a specific
     #    address (street-number + street-name) but the local hits don't actually
@@ -171,6 +183,13 @@ async def retrieval_node(state: AgentState) -> AgentState:
         live = await _live_fallback(query)
         if live:
             parcels = live
+            source = "live_arcgis_fallback"
+
+    if source:
+        observability.tag_trace(
+            tags=[f"source:{source}"],
+            metadata={"parcels_count": len(parcels)},
+        )
 
     if intent == "title_chain" and parcels:
         from app.agents.tools import title_chain

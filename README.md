@@ -96,6 +96,16 @@ LANGFUSE_HOST=https://us.cloud.langfuse.com   # or https://cloud.langfuse.com fo
 
 Restart the API. Every `/api/v1/query` invocation now produces a trace with one span per LangGraph node (router → retrieval → summarize) and a child generation span per Claude API call with token counts + latency.
 
+Each trace is also tagged so you can filter the dashboards:
+
+  | tag | when |
+  |---|---|
+  | `intent:lookup` / `:portfolio` / `:title_chain` / ... | set by the router |
+  | `source:apn_fast_path` / `:hybrid_search` / `:live_arcgis_fallback` / `:neo4j_owner_holdings` | set by the retrieval node |
+  | `eval` + `case:<id>` | set when run via `scripts/eval.py` |
+
+`/api/v1/query` returns the Langfuse `trace_id` in its response, and the chat UI surfaces a 👍 / 👎 row under each answer that POSTs `/api/v1/feedback` — landing in Langfuse as a `user_feedback` score on that same trace. The eval suite (`make eval`) also writes `faithfulness`, `answer_relevance`, and the programmatic scores back as Langfuse scores per case, so you can filter "show me every trace where faithfulness < 8" inside the project UI.
+
 Leaving the keys blank disables tracing — `app/observability.py` returns a no-op handler and there's zero runtime cost.
 
 ## Project layout

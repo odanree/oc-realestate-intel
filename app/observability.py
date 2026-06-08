@@ -75,3 +75,111 @@ def flush() -> None:
         client.flush()
     except Exception as e:
         log.warning("Langfuse flush failed: %s", e)
+
+
+# ---------------------------------------------------------------------------
+# In-trace mutations: tags, metadata, scores. No-ops when disabled.
+# ---------------------------------------------------------------------------
+
+
+def _client():
+    """Return the Langfuse client if tracing is enabled, else None."""
+    if get_langchain_handler() is None:
+        return None
+    try:
+        from langfuse import get_client
+        return get_client()
+    except Exception as e:
+        log.warning("Langfuse get_client failed: %s", e)
+        return None
+
+
+def start_trace_span(name: str, input_data: dict | None = None):
+    """Open a Langfuse span and return (span, trace_id). Returns (None, None)
+    if tracing is disabled. The returned span must be `.end()`-ed when done.
+
+    Uses the v4+ start_observation API; the returned LangfuseSpan exposes
+    `.trace_id` synchronously so we can ship it back to the caller before
+    the agent has even started running.
+    """
+    client = _client()
+    if client is None:
+        return None, None
+    try:
+        span = client.start_observation(name=name, as_type="span", input=input_data)
+        return span, span.trace_id
+    except Exception as e:
+        log.warning("Langfuse start_trace_span failed: %s", e)
+        return None, None
+
+
+def end_span(span) -> None:
+    """End a span returned by start_trace_span. No-op when span is None."""
+    if span is None:
+        return
+    try:
+        span.end()
+    except Exception as e:
+        log.warning("Langfuse span.end() failed: %s", e)
+
+
+def tag_trace(tags: list[str] | None = None, metadata: dict | None = None) -> None:
+    """Add tags + metadata to whatever trace is currently active.
+
+    Safe to call from anywhere inside a LangChain callback context (the
+    Langfuse SDK tracks the active trace via OpenTelemetry-style context).
+    No-op when tracing is disabled.
+    """
+    client = _client()
+    if client is None:
+        return
+    try:
+        kwargs: dict = {}
+        if tags:
+            kwargs["tags"] = tags
+        if metadata:
+            kwargs["metadata"] = metadata
+        client.update_current_trace(**kwargs)
+    except Exception as e:
+        log.warning("Langfuse tag_trace failed: %s", e)
+
+
+def get_trace_id() -> str | None:
+    """Return the current Langfuse trace id, or None if no trace is active."""
+    client = _client()
+    if client is None:
+        return None
+    try:
+        return client.get_current_trace_id()
+    except Exception:
+        return None
+
+
+def create_score(
+    trace_id: str,
+    name: str,
+    value: float,
+    comment: str | None = None,
+) -> None:
+    """Attach a numeric score to a finished trace.
+
+    Used for two things:
+      - /api/v1/feedback: user thumbs → Langfuse score (name='user_feedback')
+      - scripts/eval.py: judge faithfulness → score (name='faithfulness')
+
+    Range conventions: 1.0 = thumbs up, -1.0 = thumbs down for feedback;
+    0.0-10.0 for judge scores.
+    """
+    client = _client()
+    if client is None:
+        return
+    try:
+        client.create_score(
+            trace_id=trace_id,
+            name=name,
+            value=value,
+            comment=comment,
+        )
+        client.flush()  # short-lived score writes — flush immediately
+    except Exception as e:
+        log.warning("Langfuse create_score failed: %s", e)

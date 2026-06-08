@@ -39,6 +39,7 @@ export type StreamEvent =
       answer: string;
       citations: Citation[];
     }
+  | { kind: "trace"; trace_id: string | null }
   | { kind: "error"; message: string }
   | { kind: "done" };
 
@@ -83,6 +84,24 @@ export async function* streamQuery(
   }
 }
 
+/**
+ * Post user feedback (thumbs up/down) to the FastAPI feedback endpoint,
+ * which forwards it to Langfuse as a score on the matching trace.
+ */
+export async function submitFeedback(
+  trace_id: string,
+  score: 1 | -1,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/api/v1/feedback`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ trace_id, score }),
+  });
+  if (!res.ok) {
+    throw new Error(`feedback request failed (${res.status})`);
+  }
+}
+
 function parseSseBlock(block: string): StreamEvent | null {
   let event = "message";
   let data = "";
@@ -110,6 +129,8 @@ function parseSseBlock(block: string): StreamEvent | null {
           answer: payload.answer ?? "",
           citations: payload.citations ?? [],
         };
+      case "trace":
+        return { kind: "trace", trace_id: payload.trace_id ?? null };
       case "error":
         return { kind: "error", message: payload.error ?? "unknown error" };
       case "done":

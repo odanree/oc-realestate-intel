@@ -32,6 +32,7 @@ from pathlib import Path
 import yaml
 from evalkit import AnswerRelevance, AnthropicProvider, Evaluator, Faithfulness
 
+from app import observability
 from app.agents.supervisor import get_graph
 from app.config import settings
 
@@ -76,8 +77,32 @@ def _is_refusal(answer: str) -> bool:
 
 
 async def _run_case(graph, case: dict) -> dict:
-    """Invoke the agent on one case; return the case + agent outputs."""
-    state = await graph.ainvoke({"query": case["query"]})
+    """Invoke the agent on one case; return the case + agent outputs.
+
+    When Langfuse is enabled, each case gets its own trace tagged with the
+    case id so eval scores can be attached and the trace surfaces alongside
+    production traces in the same project (with the `eval` tag for filtering).
+    """
+    callbacks = observability.callbacks()
+    config: dict = {
+        "callbacks": callbacks,
+        "run_name": f"eval.{case.get('id', 'case')}",
+        "metadata": {"eval_case_id": case.get("id"), "eval_run": True},
+        "tags": ["eval", f"case:{case.get('id')}"],
+    } if callbacks else {}
+
+    # Wrap the agent call in an explicit Langfuse span so we have a definite
+    # trace_id to attach scores to. start_trace_span returns (None, None)
+    # when tracing is disabled, so the rest of the code branches naturally.
+    span, trace_id = observability.start_trace_span(
+        f"eval.{case.get('id', 'case')}",
+        {"query": case["query"], "expected_intent": case.get("expected_intent")},
+    )
+    try:
+        state = await graph.ainvoke({"query": case["query"]}, config=config)
+    finally:
+        observability.end_span(span)
+
     answer = state.get("answer", "")
     intent = state.get("intent", "unknown")
     citations = state.get("citations") or []
@@ -91,6 +116,7 @@ async def _run_case(graph, case: dict) -> dict:
         "cited_apns": cited_apns,
         "parcels": parcels,
         "graph_facts": graph_facts,
+        "trace_id": trace_id,
     }
 
 
@@ -167,7 +193,11 @@ def _format_context(parcels: list[dict], graph_facts: list[dict] | None = None) 
 
 
 async def _score_llm(evaluator: Evaluator, row: dict) -> dict:
-    """LLM-judged metrics via evalkit."""
+    """LLM-judged metrics via evalkit.
+
+    Attaches each score back to the agent's Langfuse trace if there is one,
+    so the trace shows both the agent's run and the judge's verdict.
+    """
     context = _format_context(row["parcels"], row.get("graph_facts"))
     result = evaluator.score(
         prompt=row["query"],
@@ -175,6 +205,17 @@ async def _score_llm(evaluator: Evaluator, row: dict) -> dict:
         context=context,
         metrics=[Faithfulness(), AnswerRelevance()],
     )
+    trace_id = row.get("trace_id")
+    if trace_id:
+        for metric_name in ("faithfulness", "answer_relevance"):
+            value = result.values.get(metric_name)
+            if value is not None:
+                observability.create_score(
+                    trace_id=trace_id,
+                    name=metric_name,
+                    value=value,
+                    comment=result.reasoning.get(metric_name) if result.reasoning else None,
+                )
     return {
         "faithfulness": result.values.get("faithfulness"),
         "answer_relevance": result.values.get("answer_relevance"),
@@ -288,6 +329,24 @@ async def run_eval(
         for i, row in enumerate(rows, 1):
             row.update(await _score_llm(evaluator, row))
             print(f"  [{i}/{len(rows)}] {row['id']} ({row.get('cost_usd', 0):.4f} USD)", flush=True)
+
+    # Attach programmatic scores to each Langfuse trace too — gives a single
+    # view in Langfuse with intent / citation / refusal alongside the
+    # judge-scored faithfulness + answer_relevance.
+    for row in rows:
+        trace_id = row.get("trace_id")
+        if not trace_id:
+            continue
+        for metric in ("intent_accuracy", "citation_recall",
+                       "citation_precision", "refusal_correctness"):
+            v = row.get(metric)
+            if v is None:
+                continue
+            observability.create_score(
+                trace_id=trace_id,
+                name=metric,
+                value=float(v),
+            )
 
     return rows, _aggregate(rows)
 

@@ -15,6 +15,16 @@
 
 ## Try it
 
+**Live demo:** [https://oci.danhle.net](https://oci.danhle.net) — 10k OC parcels indexed (Irvine + Newport Beach + Anaheim + Orange), synthetic owners, Langfuse-traced.
+
+Suggested first queries:
+- `Who owns parcel 461-211-62?`
+- `What does FLORES FAMILY TR own?`
+- `Show the title chain for 461-211-62`
+- `Find parcels on Bridgeport Road in Irvine`
+
+### Run locally
+
 ```powershell
 docker compose up -d                                 # Postgres + Qdrant + Neo4j
 python -m venv .venv && .\.venv\Scripts\activate
@@ -26,7 +36,7 @@ uvicorn app.main:app --reload --port 8003
 cd web && npm install && npm run dev                 # http://localhost:3003
 ```
 
-Optional Langfuse setup is in [docs/langfuse.md](docs/langfuse.md) — drop two keys in `.env` and every query produces a tagged trace with token counts, latency, costs, and judge scores.
+Optional Langfuse setup is in [docs/langfuse.md](docs/langfuse.md) — drop two keys in `.env` and every query produces a tagged trace with token counts, latency, costs, and judge scores. Production-deploy notes are in [docs/deploy.md](docs/deploy.md) — Caddy + Hetzner + the snapshot-seed workaround for the geo-blocked ArcGIS endpoint.
 
 ---
 
@@ -39,13 +49,13 @@ Add these three screenshots (PNG, ~1200px wide) into docs/screenshots/:
   3. langfuse-filtered.png — the traces list filtered by tag (e.g. intent:portfolio)
 -->
 
-| Chat UI streaming | Langfuse trace waterfall |
-|---|---|
-| ![Chat UI](docs/screenshots/chat-ui.png) | ![Langfuse trace](docs/screenshots/langfuse-trace.png) |
+Live UI at [oci.danhle.net](https://oci.danhle.net):
 
-| Tag filter: every `intent:portfolio` query |
-|---|
-| ![Tag filter](docs/screenshots/langfuse-filtered.png) |
+![Chat UI](docs/screenshots/chat-ui-subdomain.png)
+
+| Langfuse trace waterfall | Tag filter: every `intent:portfolio` query |
+|---|---|
+| ![Langfuse trace](docs/screenshots/langfuse-trace.png) | ![Tag filter](docs/screenshots/langfuse-filtered.png) |
 
 ---
 

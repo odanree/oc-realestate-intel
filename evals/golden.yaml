@@ -22,8 +22,9 @@
   query: "Tell me about APN 461-211-62 — who owns it?"
   expected_intent: lookup
   must_cite: ["461-211-62"]
-  must_refuse: true
-  notes: APN regex still matches inside a sentence; must refuse on owner since no data.
+  notes: |
+    After synthetic owner ingestion, agent should answer with the (synthetic)
+    owner name and add the illustrative-data disclaimer. No longer a refusal.
 
 - id: lookup_street_proper_noun
   query: "Find parcels on Bridgeport Road in Irvine"

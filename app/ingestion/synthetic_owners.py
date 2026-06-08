@@ -194,4 +194,8 @@ def generate_for_parcels(
             "owner": current_owner,
             "owner_kind": current_kind,
             "title_chain": transfers,
+            # Provenance marker — flips to "attom" / "parcelquest" / "assessor"
+            # when a real provider is wired in. Surfaced to the LLM and UI so
+            # users see clearly that owner names are illustrative.
+            "owner_source": "synthetic",
         }

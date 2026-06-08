@@ -32,6 +32,14 @@ export default function ParcelList({ parcels }: { parcels: Parcel[] }) {
                 <span className="text-[10px] uppercase">
                   ({p.owner_kind ?? "—"})
                 </span>
+                {p.owner_source === "synthetic" ? (
+                  <span
+                    title="Owner names are synthetic. Real OC assessor data is paywalled — see app/ingestion/synthetic_owners.py"
+                    className="ml-1 inline-block text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                  >
+                    synthetic
+                  </span>
+                ) : null}
               </div>
             ) : null}
           </li>

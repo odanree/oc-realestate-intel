@@ -121,6 +121,13 @@ async def retrieval_node(state: AgentState) -> AgentState:
         if apn:
             graph_facts = await title_chain.ainvoke({"apn": apn, "limit": 20})
 
+    # Backfill owner_source for any parcel that has owner data but no
+    # provenance tag — pre-stamp data in Qdrant/Postgres predates the
+    # owner_source field. Everything we have today is synthetic.
+    for p in parcels:
+        if p.get("owner") and not p.get("owner_source"):
+            p["owner_source"] = "synthetic"
+
     return {"parcels": parcels, "graph_facts": graph_facts}
 
 
@@ -202,7 +209,11 @@ RULES — these are absolute:
    You may name "the OC Assessor's office" or "the OC Clerk-Recorder's office"
    as places to look, but never describe what they do or supply a URL.
 5. No marketing language, no boilerplate, no "key observations" headers.
-   Plain factual prose or a tight table. That's it."""
+   Plain factual prose or a tight table. That's it.
+6. PROVENANCE: when the facts indicate `owner_source: synthetic` or
+   `(SYNTHETIC OWNER DATA — illustrative only)`, your answer MUST end with
+   a short italicized note saying owner / title-chain data is illustrative
+   and not from authoritative records. Do not omit this when applicable."""
 
 
 async def summarize_node(state: AgentState) -> AgentState:
@@ -239,15 +250,23 @@ def _citations_from_answer(answer: str, retrieved: list[dict]) -> list[dict]:
 
 def _format_facts(state: AgentState) -> str:
     parts: list[str] = []
+    any_synthetic = False
     for i, p in enumerate(state.get("parcels") or [], start=1):
         owner = p.get("owner") or "unknown"
+        source = p.get("owner_source")
+        if source == "synthetic" and p.get("owner"):
+            any_synthetic = True
+            source_tag = " (SYNTHETIC OWNER DATA — illustrative only)"
+        else:
+            source_tag = ""
         parts.append(
             f"[{i}] APN {p.get('apn', '?')} — {p.get('address', '?')} "
-            f"in {p.get('city', '?')} | owner: {owner} ({p.get('owner_kind') or 'n/a'}) "
+            f"in {p.get('city', '?')} | owner: {owner} ({p.get('owner_kind') or 'n/a'}){source_tag} "
             f"| year_built: {p.get('year_built') or 'unknown'}"
         )
     if state.get("graph_facts"):
-        parts.append("\nTitle chain (most recent first):")
+        parts.append("\nTitle chain (most recent first; SYNTHETIC):")
+        any_synthetic = True
         for g in state.get("graph_facts") or []:
             price = g.get("price")
             price_str = f"${price:,}" if price else "no price recorded"
@@ -255,6 +274,12 @@ def _format_facts(state: AgentState) -> str:
                 f"  · {g.get('date', '?')} doc#{g.get('doc_number', '?')}: "
                 f"{g.get('grantor', '?')} → {g.get('grantee', '?')} ({price_str})"
             )
+    if any_synthetic:
+        parts.append(
+            "\nNOTE: owner names and title transfers above are synthetic "
+            "(real OC assessor data is paywalled). Address, APN, and year-built "
+            "are real. Per RULE 6, end your answer with an italic disclaimer."
+        )
     return "\n".join(parts) or "(no facts retrieved)"
 
 

@@ -133,14 +133,22 @@ def _format_context(parcels: list[dict], graph_facts: list[dict] | None = None) 
     if not parcels and not graph_facts:
         return "(no facts retrieved)"
     lines: list[str] = []
+    any_synthetic = False
     for p in parcels or []:
+        source = p.get("owner_source")
+        if source == "synthetic" and p.get("owner"):
+            any_synthetic = True
+            tag = " (synthetic owner)"
+        else:
+            tag = ""
         lines.append(
             f"APN {p.get('apn', '?')} — {p.get('address', '?')} "
-            f"in {p.get('city', '?')} | owner={p.get('owner') or 'unknown'} "
+            f"in {p.get('city', '?')} | owner={p.get('owner') or 'unknown'}{tag} "
             f"({p.get('owner_kind') or 'n/a'}) | year_built={p.get('year_built') or 'unknown'}"
         )
     if graph_facts:
-        lines.append("Title chain (most recent first):")
+        lines.append("Title chain (most recent first; synthetic):")
+        any_synthetic = True
         for g in graph_facts:
             price = g.get("price")
             price_str = f"${price:,}" if price else "no price"
@@ -148,6 +156,13 @@ def _format_context(parcels: list[dict], graph_facts: list[dict] | None = None) 
                 f"  - {g.get('date', '?')} doc#{g.get('doc_number', '?')}: "
                 f"{g.get('grantor', '?')} -> {g.get('grantee', '?')} ({price_str})"
             )
+    if any_synthetic:
+        lines.append(
+            "NOTE: owner names and title transfers above are synthetic, not from "
+            "authoritative records. The answer is expected to flag this with a "
+            "disclaimer; that disclaimer IS grounded in the source data and must "
+            "not be penalized as a hallucination."
+        )
     return "\n".join(lines)
 
 

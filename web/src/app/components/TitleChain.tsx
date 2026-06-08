@@ -6,9 +6,17 @@ export default function TitleChain({ facts }: { facts: GraphFact[] }) {
   if (!facts.length) return null;
   return (
     <div>
-      <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400 mb-2">
-        Title chain
-      </h3>
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-xs font-semibold uppercase text-zinc-500 dark:text-zinc-400">
+          Title chain
+        </h3>
+        <span
+          title="Real assessor / recorder data is paywalled. See app/ingestion/synthetic_owners.py"
+          className="text-[9px] font-medium uppercase tracking-wider px-1.5 py-0.5 rounded-sm bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+        >
+          synthetic
+        </span>
+      </div>
       <ol className="space-y-2">
         {facts.map((f, i) => (
           <li

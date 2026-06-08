@@ -12,6 +12,12 @@ export type Parcel = {
   owner?: string | null;
   owner_kind?: string | null;
   year_built?: number | null;
+  /**
+   * Provenance for the owner / title-chain fields. "synthetic" means
+   * the generator filled it in because real assessor data is paywalled.
+   * Future values: "attom", "parcelquest", "assessor".
+   */
+  owner_source?: "synthetic" | "attom" | "parcelquest" | "assessor" | null;
   // Title chain is embedded in the Qdrant payload for lookup queries.
   // For title_chain-intent queries, this lives on graph_facts instead.
   title_chain?: GraphFact[];

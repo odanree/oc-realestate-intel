@@ -63,7 +63,9 @@ export async function* streamQuery(
   while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    // sse_starlette emits CRLF terminators. Normalize so a single split
+    // pattern works regardless of which line-ending style the server uses.
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
 
     let separatorIdx: number;
     while ((separatorIdx = buffer.indexOf("\n\n")) !== -1) {

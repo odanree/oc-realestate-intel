@@ -80,13 +80,19 @@ def route_after_router(state: AgentState) -> Literal["retrieval", "comparison", 
 
 
 async def retrieval_node(state: AgentState) -> AgentState:
-    """Hybrid retrieval — APN match goes through direct lookup; otherwise dense."""
+    """Hybrid retrieval with two fallback layers:
+
+      1. APN regex fast-path → direct ID lookup (covers "What is parcel X?").
+      2. BM25 + dense fused via RRF over the local seeded set.
+      3. Live OC ArcGIS lookup → reaches all 702k OC parcels for addresses
+         outside our seed. Adds ~500ms when triggered.
+    """
     intent = state.get("intent", "lookup")
     query = state["query"]
     parcels: list[dict] = []
     graph_facts: list[dict] = []
 
-    # Fast path: query mentions an APN → look it up exactly, skip semantic search.
+    # 1. APN fast path.
     mentioned_apns = _APN_PATTERN.findall(query)
     if mentioned_apns and intent in ("lookup", "summarize", "title_chain"):
         from app.services import vector
@@ -95,9 +101,19 @@ async def retrieval_node(state: AgentState) -> AgentState:
             if hit:
                 parcels.append(hit)
 
+    # 2. Hybrid search over seeded set.
     if not parcels and intent in ("lookup", "summarize"):
         from app.agents.tools import parcel_lookup
         parcels = await parcel_lookup.ainvoke({"query": query, "top_k": 5})
+
+    # 3. Live ArcGIS fallback — triggered when the query mentions a specific
+    #    address (street-number + street-name) but the local hits don't actually
+    #    include that street number. Hybrid search always returns top-k, so
+    #    "no parcels" never fires; we need a relevance check.
+    if intent in ("lookup", "summarize") and not _hits_match_address(query, parcels):
+        live = await _live_fallback(query)
+        if live:
+            parcels = live
 
     if intent == "title_chain" and parcels:
         from app.agents.tools import title_chain
@@ -106,6 +122,50 @@ async def retrieval_node(state: AgentState) -> AgentState:
             graph_facts = await title_chain.ainvoke({"apn": apn, "limit": 20})
 
     return {"parcels": parcels, "graph_facts": graph_facts}
+
+
+_ADDRESS_NUM_RE = re.compile(r"\b(\d{1,6})\s+([A-Za-z][\w]*)", re.IGNORECASE)
+
+
+def _hits_match_address(query: str, parcels: list[dict]) -> bool:
+    """True iff the query has no street-number pattern OR at least one local
+    hit's address contains both the street number AND the next address token
+    from the query. False → trigger live fallback.
+    """
+    match = _ADDRESS_NUM_RE.search(query)
+    if not match:
+        return True  # No address in query → local hits are fine as-is.
+    street_num = match.group(1)
+    next_token = match.group(2).upper()
+    for p in parcels:
+        addr = (p.get("address") or "").upper()
+        if street_num in addr and next_token in addr:
+            return True
+    return False
+
+
+async def _live_fallback(query: str) -> list[dict]:
+    """Hit OC ArcGIS live and enrich the result with synthetic owner data.
+
+    We don't write the result back to Qdrant/Postgres on this path —
+    cache misses are deterministic so the same query re-hits ArcGIS.
+    If a particular area becomes hot, expand the seed filter instead.
+    """
+    from app.ingestion.synthetic_owners import generate_for_parcels
+    from app.services import live_arcgis
+
+    try:
+        raw = await live_arcgis.lookup_by_address(query, top_k=5)
+    except Exception as e:
+        log.warning("live ArcGIS fallback failed: %s", e)
+        return []
+    if not raw:
+        return []
+    # Tag each parcel so the answer can mark them as live (not from our seed).
+    enriched = list(generate_for_parcels(raw))
+    for p in enriched:
+        p["source"] = "live"
+    return enriched
 
 
 # ---------------------------------------------------------------------------

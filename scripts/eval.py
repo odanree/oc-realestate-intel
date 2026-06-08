@@ -201,11 +201,18 @@ def _aggregate(rows: list[dict]) -> dict:
     return out
 
 
-def _render_markdown(rows: list[dict], summary: dict, judge_model: str) -> str:
+def _render_markdown(
+    rows: list[dict],
+    summary: dict,
+    judge_model: str,
+    agent_model: str | None = None,
+) -> str:
     md: list[str] = []
     md.append("# oc-realestate-intel eval report")
     md.append("")
     md.append(f"- generated: {datetime.utcnow().isoformat()}Z")
+    if agent_model:
+        md.append(f"- agent model: `{agent_model}`")
     md.append(f"- judge model: `{judge_model}`")
     md.append(f"- cases: {len(rows)}")
     md.append(f"- total judge cost: ${summary['total_cost_usd']:.4f}")
@@ -255,15 +262,12 @@ def _render_markdown(rows: list[dict], summary: dict, judge_model: str) -> str:
     return "\n".join(md)
 
 
-async def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--golden", default="evals/golden.yaml")
-    parser.add_argument("--no-llm-judge", action="store_true")
-    parser.add_argument("--out", default=None, help="Write markdown to this path")
-    parser.add_argument("--json", action="store_true", help="Print JSON summary to stdout")
-    args = parser.parse_args()
-
-    cases = yaml.safe_load(Path(args.golden).read_text(encoding="utf-8"))
+async def run_eval(
+    cases: list[dict],
+    judge_model: str,
+    use_llm_judge: bool = True,
+) -> tuple[list[dict], dict]:
+    """Run the eval suite once. Returns (per-case rows, summary)."""
     graph = get_graph()
 
     rows: list[dict] = []
@@ -274,21 +278,50 @@ async def main() -> None:
         rows.append(result)
         print(f"  [{i}/{len(cases)}] {case['id']}", flush=True)
 
-    if not args.no_llm_judge:
-        # Pass the key explicitly — pydantic-settings loads .env into `settings`
-        # but doesn't propagate to os.environ, which evalkit's default reads.
+    if use_llm_judge:
         evaluator = Evaluator(
-            judge=settings.anthropic_model,
+            judge=judge_model,
             provider=AnthropicProvider(api_key=settings.anthropic_api_key),
             max_tokens=512,
         )
-        print(f"Scoring with evalkit ({settings.anthropic_model})...", flush=True)
+        print(f"Scoring with evalkit ({judge_model})...", flush=True)
         for i, row in enumerate(rows, 1):
             row.update(await _score_llm(evaluator, row))
             print(f"  [{i}/{len(rows)}] {row['id']} ({row.get('cost_usd', 0):.4f} USD)", flush=True)
 
-    summary = _aggregate(rows)
-    report = _render_markdown(rows, summary, settings.anthropic_model)
+    return rows, _aggregate(rows)
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--golden", default="evals/golden.yaml")
+    parser.add_argument("--no-llm-judge", action="store_true")
+    parser.add_argument("--out", default=None, help="Write markdown to this path")
+    parser.add_argument("--json", action="store_true", help="Print JSON summary to stdout")
+    parser.add_argument(
+        "--agent-model",
+        default=None,
+        help="Override agent model (e.g. claude-opus-4-7). Default: settings.anthropic_model.",
+    )
+    args = parser.parse_args()
+
+    if args.agent_model:
+        # Override the agent model used by the supervisor _judge_llm()
+        # and force the cached graph to rebuild.
+        import app.config
+        import app.agents.supervisor as sup
+        app.config.settings.anthropic_model = args.agent_model
+        sup._graph = None
+
+    cases = yaml.safe_load(Path(args.golden).read_text(encoding="utf-8"))
+    graph = get_graph()
+
+    # Run the eval — judge stays on a fixed Sonnet so model-vs-model comparisons
+    # are apples-to-apples even when --agent-model overrides the agent model.
+    judge_model = "claude-sonnet-4-6"
+    rows, summary = await run_eval(cases, judge_model, use_llm_judge=not args.no_llm_judge)
+    agent_model = args.agent_model or settings.anthropic_model
+    report = _render_markdown(rows, summary, judge_model=judge_model, agent_model=agent_model)
 
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)

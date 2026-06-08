@@ -148,10 +148,26 @@ web/
 
 **Weekend 3 — Eval + Polish**
 - [x] [evalkit](../evalkit) integration: G-Eval faithfulness + answer relevance via LLM-as-judge
-- [x] 12-case golden set + programmatic intent/citation/refusal metrics
+- [x] 16-case golden set + programmatic intent/citation/refusal metrics
 - [x] Markdown report generator, `make eval` target
-- [ ] Expand to 30+ cases; model comparison sweeps (Sonnet 4.6 / Opus 4.7 / GPT-4o)
+- [x] Model comparison sweep: Haiku 4.5 vs Sonnet 4.6 vs Opus 4.7 (`make sweep`)
+- [ ] Expand to 30+ cases
 - [ ] Loom demo + architecture diagram
+
+## Model selection — what the data said
+
+Ran the 16-case golden set against three Claude models, fixed judge (Sonnet 4.6):
+
+| metric | `claude-haiku-4-5-20251001` | `claude-sonnet-4-6` | `claude-opus-4-7` |
+|---|---|---|---|
+| `intent_accuracy` | **1.00** | 0.94 | **1.00** |
+| `citation_recall` | 1.00 | 1.00 | 1.00 |
+| `citation_precision` | 1.00 | 1.00 | 1.00 |
+| `refusal_correctness` | 1.00 | 1.00 | 1.00 |
+| `faithfulness` | 9.78 | **9.91** | 9.84 |
+| `answer_relevance` | 6.44 | **6.88** | 6.81 |
+
+**Picked Sonnet 4.6** as the production model. Opus offered no measurable lift on faithfulness or answer relevance — it actually slightly underperformed Sonnet on both judge-scored dimensions. Haiku is viable as a cost-down option if needed (lags Sonnet by ~0.4 points on relevance), and notably matched Opus on intent routing. See [`evals/reports/`](evals/reports/) for the full sweep.
 
 ## Eval results
 

@@ -1,4 +1,4 @@
-.PHONY: install install-web up down seed seed-fresh test eval eval-fast api web
+.PHONY: install install-web up down seed seed-fresh test eval eval-fast sweep api web
 
 install:
 	python -m venv .venv && .venv/Scripts/python -m pip install -e ".[dev,embeddings]" && .venv/Scripts/python -m pip install -e ../evalkit[anthropic]
@@ -26,6 +26,9 @@ eval:
 
 eval-fast:
 	.venv/Scripts/python -m scripts.eval --no-llm-judge --json
+
+sweep:
+	.venv/Scripts/python -m scripts.sweep --out evals/reports/sweep-$$(powershell -NoProfile -Command "Get-Date -Format 'yyyy-MM-dd-HHmm'").md
 
 api:
 	.venv/Scripts/python -m uvicorn app.main:app --host 127.0.0.1 --port 8003 --reload

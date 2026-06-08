@@ -32,14 +32,18 @@ The waterfall view is the most diagnostically useful single image — it's the s
 
 ## 3. `langfuse-filtered.png`
 
-What to capture: the traces list filtered by a single source tag.
+What to capture: the traces list filtered by a single tag.
 
 Steps:
 1. Go to the traces list
-2. In the left sidebar, click `source:live_arcgis_fallback` checkbox alone
-3. Capture the resulting filtered list — even if there are only 2-3 rows, that's the point: "this is how often the seed didn't cover the user's query"
+2. In the left sidebar, check ONE tag, e.g. `intent:portfolio` or `source:live_arcgis_fallback`
+3. Capture the resulting filtered list — the point is "this is how I slice production traffic by retrieval path or query type"
 
-If you have eval-tagged traces too, an alternative is to filter by the `eval` tag — same point, different angle.
+Good single-tag candidates:
+- `intent:portfolio` — every owner-search query (used in the current screenshot)
+- `source:live_arcgis_fallback` — cache miss rate
+- `eval` — eval suite traces separated from production
+- `intent:unknown` — out-of-domain / unparseable queries
 
 ---
 

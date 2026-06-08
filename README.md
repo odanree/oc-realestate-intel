@@ -36,14 +36,14 @@ Optional Langfuse setup is in [docs/langfuse.md](docs/langfuse.md) — drop two 
 Add these three screenshots (PNG, ~1200px wide) into docs/screenshots/:
   1. chat-ui.png        — the chat UI showing a query + answer + agent trace timeline + citation chips
   2. langfuse-trace.png — a single Langfuse trace waterfall (router → retrieval → summarize → ChatAnthropic)
-  3. langfuse-filtered.png — the traces list filtered by tag (e.g. source:live_arcgis_fallback)
+  3. langfuse-filtered.png — the traces list filtered by tag (e.g. intent:portfolio)
 -->
 
 | Chat UI streaming | Langfuse trace waterfall |
 |---|---|
 | ![Chat UI](docs/screenshots/chat-ui.png) | ![Langfuse trace](docs/screenshots/langfuse-trace.png) |
 
-| Tag filter: live ArcGIS fallback rate |
+| Tag filter: every `intent:portfolio` query |
 |---|
 | ![Tag filter](docs/screenshots/langfuse-filtered.png) |
 

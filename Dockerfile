@@ -20,8 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Hatchling validates `readme = "README.md"` at metadata-generation time,
 # so the README must be present even though we're only installing deps here.
 COPY pyproject.toml README.md ./
+
+# Install in two steps so torch + sentence-transformers land as CPU-only.
+# The default torch wheels are ~700MB (CUDA libs); CPU wheels are ~150MB
+# and we never use a GPU in this image — that 550MB savings is the
+# difference between fitting on a 40GB Hetzner box and failing on extract.
 RUN pip install --upgrade pip && \
-    pip install -e ".[embeddings]"
+    pip install --extra-index-url https://download.pytorch.org/whl/cpu \
+        torch \
+    && pip install -e ".[embeddings]"
 
 # Bake the embedding model into the image so the first /query call doesn't
 # block on a HuggingFace download. ~80MB.
@@ -29,6 +36,16 @@ RUN python - <<'PY'
 from sentence_transformers import SentenceTransformer
 SentenceTransformer("all-MiniLM-L6-v2")
 PY
+
+# Strip test suites + pyc files + caches from site-packages. sklearn alone
+# ships ~50MB of test fixtures we never need at runtime.
+RUN find /usr/local/lib/python3.11/site-packages \
+        \( -type d -name 'tests' -o -type d -name 'test' \) \
+        -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages \
+        -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true && \
+    find /usr/local/lib/python3.11/site-packages \
+        -name '*.pyc' -delete 2>/dev/null || true
 
 FROM python:3.11-slim
 

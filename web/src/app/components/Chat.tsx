@@ -27,9 +27,9 @@ type Turn = {
 
 const EXAMPLES = [
   "Who owns parcel 461-211-62?",
+  "What does FLORES FAMILY TR own?",
   "Find parcels on Bridgeport Road in Irvine",
   "Show the title chain for 461-211-62",
-  "What is parcel 105-341-02?",
 ];
 
 export default function Chat() {
@@ -233,6 +233,7 @@ function IntentBadge({ intent }: { intent: string }) {
     compare: "bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300",
     summarize: "bg-sky-100 text-sky-700 dark:bg-sky-950 dark:text-sky-300",
     title_chain: "bg-violet-100 text-violet-700 dark:bg-violet-950 dark:text-violet-300",
+    portfolio: "bg-fuchsia-100 text-fuchsia-700 dark:bg-fuchsia-950 dark:text-fuchsia-300",
     unknown: "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400",
   };
   return (

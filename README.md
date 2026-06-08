@@ -155,17 +155,17 @@ web/
 
 ## Eval results
 
-13-case golden set, judged by Claude Sonnet 4.6 via [evalkit](../evalkit).
+16-case golden set, judged by Claude Sonnet 4.6 via [evalkit](../evalkit).
 
 | metric | score |
 |---|---|
-| `intent_accuracy` | 0.92 |
+| `intent_accuracy` | 0.94 |
 | `citation_recall` | 1.00 |
 | `citation_precision` | 1.00 |
 | `refusal_correctness` | 1.00 |
-| `faithfulness` | **9.96** / 10 |
-| `answer_relevance` | 7.12 / 10 |
-| total judge cost | $0.05 |
+| `faithfulness` | **9.94** / 10 |
+| `answer_relevance` | 6.81 / 10 |
+| total judge cost | $0.07 |
 
 Findings the eval surfaced as the system evolved:
 

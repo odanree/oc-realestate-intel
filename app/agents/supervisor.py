@@ -41,31 +41,78 @@ def _judge_llm() -> ChatAnthropic:
 # ---------------------------------------------------------------------------
 
 ROUTER_SYSTEM = """You are a router for an Orange County real-estate intelligence agent.
-Classify the user's query into ONE intent:
 
-  lookup       — find a specific parcel by address/APN/owner name
-  compare      — compare two or more parcels, or compare a parcel to recent comps
-  summarize    — summarize a single parcel, its history, or its owner's portfolio
+Classify the user's query into ONE intent and, when the intent is "portfolio",
+extract the owner entity name (LLC, trust, person, or corporation) the user
+is asking about.
+
+Intents:
+  lookup       — find a specific parcel by address or APN
+  compare      — compare two or more parcels, or compare to recent comps
+  summarize    — summarize a single parcel or its history
   title_chain  — trace ownership history / chain of title for a parcel
+  portfolio    — list every parcel held by a named owner entity
+                 ("What does X own?", "show all parcels held by X",
+                  "X's holdings", "list everything Y owns")
   unknown      — query is not about real estate or is too vague
 
-Respond with ONLY the single-word intent."""
+Respond with ONLY a single JSON object. Examples:
+  {"intent": "lookup"}
+  {"intent": "portfolio", "owner_name": "IRVINE COMPANY LLC"}
+  {"intent": "title_chain"}
+  {"intent": "unknown"}
+
+For "portfolio" you MUST include owner_name. Use the exact entity name from
+the query (uppercase trusts/LLCs are fine)."""
 
 
 async def router_node(state: AgentState) -> AgentState:
+    import json
+
     llm = _judge_llm()
     response = await llm.ainvoke([
         SystemMessage(content=ROUTER_SYSTEM),
         HumanMessage(content=state["query"]),
     ])
-    intent_raw = response.content.strip().lower() if isinstance(response.content, str) else ""
-    valid = {"lookup", "compare", "summarize", "title_chain", "unknown"}
-    intent = intent_raw if intent_raw in valid else "unknown"
-    log.info("router classified intent=%s for query=%r", intent, state["query"][:80])
-    return {"intent": intent}
+    raw = response.content.strip() if isinstance(response.content, str) else ""
+    if raw.startswith("```"):
+        parts = raw.split("```")
+        if len(parts) >= 2:
+            raw = parts[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        raw = raw.strip()
+
+    valid = {"lookup", "compare", "summarize", "title_chain", "portfolio", "unknown"}
+    out: dict = {"intent": "unknown"}
+    try:
+        parsed = json.loads(raw)
+        intent = parsed.get("intent", "unknown")
+        if intent in valid:
+            out["intent"] = intent
+        if intent == "portfolio":
+            owner = (parsed.get("owner_name") or "").strip()
+            if owner:
+                out["owner_name"] = owner
+            else:
+                # Router said portfolio but didn't name an owner — degrade gracefully.
+                out["intent"] = "lookup"
+    except (json.JSONDecodeError, AttributeError):
+        # Tolerate the old single-word format too.
+        single = raw.lower().strip()
+        if single in valid:
+            out["intent"] = single
+
+    log.info(
+        "router classified intent=%s owner=%r for query=%r",
+        out["intent"], out.get("owner_name"), state["query"][:80],
+    )
+    return out
 
 
-def route_after_router(state: AgentState) -> Literal["retrieval", "comparison", "end"]:
+def route_after_router(
+    state: AgentState,
+) -> Literal["retrieval", "comparison", "end"]:
     intent = state.get("intent", "unknown")
     if intent == "unknown":
         return "end"
@@ -91,6 +138,16 @@ async def retrieval_node(state: AgentState) -> AgentState:
     query = state["query"]
     parcels: list[dict] = []
     graph_facts: list[dict] = []
+
+    # Portfolio queries: skip vector search entirely, hit Neo4j directly.
+    if intent == "portfolio":
+        owner_name = state.get("owner_name") or query
+        from app.agents.tools import owner_holdings
+        holdings = await owner_holdings.ainvoke({"owner_name_or_apn": owner_name})
+        # Tag holdings as synthetic so the disclaimer fires.
+        for h in holdings:
+            h["owner_source"] = "synthetic"
+        return {"parcels": holdings, "graph_facts": []}
 
     # 1. APN fast path.
     mentioned_apns = _APN_PATTERN.findall(query)

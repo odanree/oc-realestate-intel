@@ -17,7 +17,11 @@ class AgentState(TypedDict, total=False):
     query: str
 
     # Router classification
-    intent: Literal["lookup", "compare", "summarize", "title_chain", "unknown"]
+    intent: Literal[
+        "lookup", "compare", "summarize", "title_chain", "portfolio", "unknown"
+    ]
+    # Owner entity extracted by the router for portfolio-intent queries.
+    owner_name: str
 
     # Retrieval results
     parcels: list[dict]

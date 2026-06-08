@@ -91,3 +91,23 @@
   query: "tell me stuff"
   expected_intent: unknown
   notes: Too vague to classify — should be unknown.
+
+- id: portfolio_simple
+  query: "What does FLORES FAMILY TR own?"
+  expected_intent: portfolio
+  must_cite: ["461-211-62"]
+  notes: |
+    Routes to portfolio; owner_holdings should return parcels held by
+    FLORES FAMILY TR. APN 461-211-62 is deterministic in the synthetic seed.
+
+- id: portfolio_alt_phrasing
+  query: "Show all parcels held by FLORES FAMILY TR"
+  expected_intent: portfolio
+  must_cite: ["461-211-62"]
+  notes: Different surface form — router still classifies as portfolio.
+
+- id: portfolio_unknown_owner
+  query: "What does NONEXISTENT FAMILY TRUST own?"
+  expected_intent: portfolio
+  must_refuse: true
+  notes: Owner not in graph; agent must refuse, not invent holdings.

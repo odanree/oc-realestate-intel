@@ -1,0 +1,62 @@
+name: governance audit
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # Needed only for the `file findings as issues` step on push to master.
+  issues: write
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install agent-governance
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "git+https://github.com/odanree/agent-governance.git@v0.2.1"
+
+      # Always produce the Markdown report so reviewers can read it as a
+      # workflow artifact, regardless of whether `--fail-on` trips.
+      - name: Run audit
+        id: audit
+        run: |
+          agent-governance audit . --format markdown -o audit-report.md
+          cat audit-report.md
+        continue-on-error: false
+
+      - name: Upload audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-audit
+          path: audit-report.md
+
+      # Gate the merge on warnings/violations. Re-runs the audit because the
+      # previous step writes to a file but doesn't fail on findings — keeping
+      # the gating decision visible in the workflow log separately from the
+      # report production.
+      - name: Gate on findings (warning+)
+        run: agent-governance audit . --fail-on warning
+
+      # Only on push to master: file each finding as a deduplicated GitHub
+      # issue. PRs don't open issues — that would be noisy and out of
+      # the contributor's control. The standard GITHUB_TOKEN supplied by
+      # Actions has issues:write because of the `permissions:` block above.
+      - name: File findings as issues
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: agent-governance audit . --github ${{ github.repository }}

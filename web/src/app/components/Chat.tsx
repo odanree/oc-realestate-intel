@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Citation,
+  GovernanceCheck,
   GraphFact,
   Parcel,
   Provenance,
@@ -22,6 +23,7 @@ type Turn = {
   answer?: string;
   citations: Citation[];
   provenance?: Provenance | null;
+  governance_report: GovernanceCheck[];
   parcels: Parcel[];
   graph_facts: GraphFact[];
   trace: TraceEvent[];
@@ -65,6 +67,7 @@ export default function Chat() {
         query,
         status: "streaming",
         citations: [],
+        governance_report: [],
         parcels: [],
         graph_facts: [],
         trace: [{ stage: "router", label: "Routing…", t: Date.now() }],
@@ -203,6 +206,27 @@ function applyEvent(turn: Turn, evt: StreamEvent): Turn {
           { stage: "summarize", label: "Synthesized answer", t: Date.now() },
         ],
       };
+    case "governance": {
+      const fires = evt.governance_report.filter((g) => g.fired).length;
+      return {
+        ...turn,
+        // Governance may have mutated the answer (disclaimer appended,
+        // URL redacted); take it as the canonical post-gate text.
+        answer: evt.answer || turn.answer,
+        governance_report: evt.governance_report,
+        trace: [
+          ...turn.trace,
+          {
+            stage: "governance",
+            label:
+              fires === 0
+                ? "Governance: passed"
+                : `Governance: ${fires} check${fires === 1 ? "" : "s"} fired`,
+            t: Date.now(),
+          },
+        ],
+      };
+    }
     case "trace":
       return { ...turn, langfuse_trace_id: evt.trace_id };
     case "done":
@@ -228,10 +252,13 @@ function TurnView({
           {turn.query}
         </div>
       </div>
-      {(turn.intent || turn.provenance) && (
+      {(turn.intent || turn.provenance || turn.governance_report.some((g) => g.fired)) && (
         <div className="flex flex-wrap items-center gap-2">
           {turn.intent && <IntentBadge intent={turn.intent} />}
           {turn.provenance && <ProvenanceChip provenance={turn.provenance} />}
+          {turn.governance_report.some((g) => g.fired) && (
+            <GovernanceChip report={turn.governance_report} />
+          )}
         </div>
       )}
       {turn.answer ? (
@@ -317,6 +344,34 @@ function FeedbackBar({
         <span className="text-[10px] italic">recorded</span>
       )}
     </div>
+  );
+}
+
+function GovernanceChip({ report }: { report: GovernanceCheck[] }) {
+  const fires = report.filter((g) => g.fired);
+  if (fires.length === 0) return null;
+  const worst = fires.some((g) => g.severity === "violation")
+    ? "violation"
+    : fires.some((g) => g.severity === "warning")
+      ? "warning"
+      : "info";
+  const colors: Record<string, string> = {
+    violation:
+      "bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300 border-rose-200 dark:border-rose-800/60",
+    warning:
+      "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border-amber-200 dark:border-amber-800/60",
+    info:
+      "bg-fuchsia-100 text-fuchsia-800 dark:bg-fuchsia-950 dark:text-fuchsia-300 border-fuchsia-200 dark:border-fuchsia-800/60",
+  };
+  const tooltip = fires.map((g) => `${g.check_name}: ${g.detail}`).join("\n");
+  return (
+    <span
+      title={tooltip}
+      className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded border ${colors[worst]}`}
+    >
+      <span aria-hidden>●</span>
+      governance: {fires.length} {fires.length === 1 ? "check" : "checks"}
+    </span>
   );
 }
 

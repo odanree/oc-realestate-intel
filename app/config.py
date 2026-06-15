@@ -43,5 +43,13 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    # Governance node (see ADR-0007). Default sink is LogSink — no external
+    # side effects in dev/CI. Set to "github" + supply GOVERNANCE_GITHUB_REPO
+    # and GITHUB_TOKEN to file model-behavior incidents as GitHub issues.
+    governance_incident_sink: str = Field(default="log", alias="GOVERNANCE_INCIDENT_SINK")
+    governance_github_repo: str = Field(default="", alias="GOVERNANCE_GITHUB_REPO")
+    governance_url_allowlist: str = Field(default="", alias="GOVERNANCE_URL_ALLOWLIST")
+    github_token: str = Field(default="", alias="GITHUB_TOKEN")
+
 
 settings = Settings()

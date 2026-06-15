@@ -1,7 +1,7 @@
 "use client";
 
 export type TraceEvent = {
-  stage: "router" | "retrieval" | "comparison" | "summarize";
+  stage: "router" | "retrieval" | "comparison" | "summarize" | "governance";
   label: string;
   t: number;
 };
@@ -11,6 +11,7 @@ const STAGE_COLORS: Record<string, string> = {
   retrieval: "bg-emerald-500",
   comparison: "bg-amber-500",
   summarize: "bg-sky-500",
+  governance: "bg-fuchsia-500",
 };
 
 export default function AgentTrace({

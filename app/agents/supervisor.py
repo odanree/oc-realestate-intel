@@ -303,28 +303,18 @@ async def summarize_node(state: AgentState) -> AgentState:
     provenance = _compute_provenance(
         state.get("parcels") or [], state.get("graph_facts") or []
     )
-    answer = _enforce_disclaimer(answer, provenance)
+    # Disclaimer enforcement, URL allowlist, prompt-injection detection all
+    # live in the governance node now (see ADR-0007). summarize just emits
+    # the unguarded answer; governance gates it before END.
     citations = _citations_from_answer(answer, state.get("parcels") or [])
     return {"answer": answer, "citations": citations, "provenance": provenance}
 
 
 # ---------------------------------------------------------------------------
-# Provenance: structured signal + disclaimer enforcement
+# Provenance classification (consumed by governance.DisclaimerCheck)
 # ---------------------------------------------------------------------------
 
-CANONICAL_DISCLAIMER = (
-    "*Owner and title-chain data shown are synthetic and illustrative only — "
-    "not from authoritative OC assessor records.*"
-)
-
-# Matches a markdown-italicized span (* or _ delimited, single line) that
-# mentions the synthetic/illustrative provenance. Broad on purpose: the
-# model's own phrasing varies, and we only care whether SOMETHING italic
-# names the provenance honestly.
-_DISCLAIMER_PATTERN = re.compile(
-    r"[*_][^*_\n]*(synthetic|illustrative|not\s+from\s+authoritative|paywalled)[^*_\n]*[*_]",
-    re.IGNORECASE,
-)
+from app.governance import CANONICAL_DISCLAIMER  # noqa: E402
 
 
 def _compute_provenance(parcels: list[dict], graph_facts: list[dict]) -> dict:
@@ -337,6 +327,7 @@ def _compute_provenance(parcels: list[dict], graph_facts: list[dict]) -> dict:
 
     The disclaimer string is the canonical italic line the answer should also
     contain; downstream callers read this field instead of parsing prose.
+    The governance node consumes `disclaimer` to decide whether to enforce.
     """
     sources: set[str] = set()
     for p in parcels:
@@ -358,24 +349,6 @@ def _compute_provenance(parcels: list[dict], graph_facts: list[dict]) -> dict:
     if sources == {"authoritative"}:
         return {"owner_data_source": "authoritative", "disclaimer": None}
     return {"owner_data_source": "mixed", "disclaimer": CANONICAL_DISCLAIMER}
-
-
-def _enforce_disclaimer(answer: str, provenance: dict) -> str:
-    """Append the canonical disclaimer when synthetic data is in context and
-    the model dropped its own italic provenance note.
-
-    Runtime guard for T1 / RULE 6 — the prompt asks the LLM to add the note,
-    the eval gates assert it, and this is the last-line backstop so the
-    disclaimer is structurally guaranteed, not prompt-dependent.
-    """
-    if not provenance.get("disclaimer"):
-        return answer
-    if _DISCLAIMER_PATTERN.search(answer):
-        return answer
-    log.warning(
-        "summarize: model dropped synthetic-data disclaimer; appending canonical"
-    )
-    return answer.rstrip() + "\n\n" + provenance["disclaimer"]
 
 
 # APN format: three groups of digits separated by hyphens (e.g. 934-21-145, 461-211-62).
@@ -439,11 +412,14 @@ def _format_facts(state: AgentState) -> str:
 
 
 def build_graph():
+    from app.governance import governance_node
+
     g: StateGraph = StateGraph(AgentState)
     g.add_node("router", router_node)
     g.add_node("retrieval", retrieval_node)
     g.add_node("comparison", comparison_node)
     g.add_node("summarize", summarize_node)
+    g.add_node("governance", governance_node)
 
     g.add_edge(START, "router")
     g.add_conditional_edges(
@@ -453,7 +429,8 @@ def build_graph():
     )
     g.add_edge("retrieval", "summarize")
     g.add_edge("comparison", "summarize")
-    g.add_edge("summarize", END)
+    g.add_edge("summarize", "governance")
+    g.add_edge("governance", END)
     return g.compile()
 
 

@@ -36,6 +36,11 @@ class AgentState(TypedDict, total=False):
     # schemas.query.Provenance). Set by the summarize node.
     provenance: dict
 
+    # Governance check results (see ADR-0007). Each entry is a
+    # CheckResult-as-dict; the governance node populates this list and
+    # mutates `answer` if any check redacted/appended.
+    governance_report: list[dict]
+
     # Cost / token bookkeeping
     input_tokens: int
     output_tokens: int

@@ -16,6 +16,7 @@ from app.agents.supervisor import get_graph
 from app.schemas.query import (
     Citation,
     FeedbackRequest,
+    GovernanceCheck,
     Provenance,
     QueryRequest,
     QueryResponse,
@@ -38,6 +39,9 @@ async def query(req: QueryRequest) -> QueryResponse:
         intent=final.get("intent", "unknown"),
         citations=[Citation(**c) for c in final.get("citations", [])],
         provenance=Provenance(**prov) if prov else None,
+        governance_report=[
+            GovernanceCheck(**g) for g in final.get("governance_report", [])
+        ],
         trace_id=trace_id,
     )
 

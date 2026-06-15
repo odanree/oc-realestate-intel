@@ -25,11 +25,27 @@ class Provenance(BaseModel):
     disclaimer: str | None = None
 
 
+class GovernanceCheck(BaseModel):
+    """Result of one governance check run on the answer or query.
+
+    See ADR-0007. The list of these on a QueryResponse is the audit trail
+    for what gates the model output passed through.
+    """
+
+    check_name: str
+    fired: bool
+    severity: Literal["info", "warning", "violation"]
+    detail: str
+    fingerprint: str
+    mutated_answer: bool = False
+
+
 class QueryResponse(BaseModel):
     answer: str
     intent: str
     citations: list[Citation] = []
     provenance: Provenance | None = None
+    governance_report: list[GovernanceCheck] = []
     # Langfuse trace id — None when tracing is disabled. UI uses this to
     # attach thumbs-up/down feedback to the same trace.
     trace_id: str | None = None

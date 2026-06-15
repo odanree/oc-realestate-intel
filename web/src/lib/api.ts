@@ -35,6 +35,15 @@ export type Provenance = {
   disclaimer: string | null;
 };
 
+export type GovernanceCheck = {
+  check_name: string;
+  fired: boolean;
+  severity: "info" | "warning" | "violation";
+  detail: string;
+  fingerprint: string;
+  mutated_answer: boolean;
+};
+
 export type StreamEvent =
   | { kind: "router"; intent: string }
   | { kind: "retrieval"; parcels: Parcel[]; graph_facts: GraphFact[] }
@@ -44,6 +53,11 @@ export type StreamEvent =
       answer: string;
       citations: Citation[];
       provenance: Provenance | null;
+    }
+  | {
+      kind: "governance";
+      answer: string;
+      governance_report: GovernanceCheck[];
     }
   | { kind: "trace"; trace_id: string | null }
   | { kind: "error"; message: string }
@@ -135,6 +149,12 @@ function parseSseBlock(block: string): StreamEvent | null {
           answer: payload.answer ?? "",
           citations: payload.citations ?? [],
           provenance: payload.provenance ?? null,
+        };
+      case "governance":
+        return {
+          kind: "governance",
+          answer: payload.answer ?? "",
+          governance_report: payload.governance_report ?? [],
         };
       case "trace":
         return { kind: "trace", trace_id: payload.trace_id ?? null };

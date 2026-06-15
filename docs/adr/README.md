@@ -14,3 +14,4 @@ ADRs are append-only. When a decision is reversed, write a new ADR that supersed
 | [0004](0004-synthetic-owners-with-provenance-flagging.md) | Synthetic owner data with end-to-end provenance flagging | Accepted |
 | [0005](0005-langfuse-evalkit-for-eval-driven-dev.md) | Langfuse + evalkit for the eval-driven dev loop | Accepted |
 | [0006](0006-mcp-as-consumption-interface.md) | MCP as the programmatic consumption interface | Accepted |
+| [0007](0007-governance-node-with-incident-sink.md) | Governance node via the `agent-governance` package | Accepted |

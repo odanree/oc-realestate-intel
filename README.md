@@ -142,6 +142,8 @@ The eval has surfaced three real bugs so far — a hallucinated URL, speculative
 
   See [ADR-0004](docs/adr/0004-synthetic-owners-with-provenance-flagging.md) for the design and [docs/threat-model.md](docs/threat-model.md#stride-table) rows T1/T3 for the threat-model mapping.
 
+- **Governance node — one explicit place that gates model output.** The disclaimer guard, URL allowlist, and prompt-injection detector all live in a `governance` LangGraph node that runs between `summarize` and `END`. Each check emits its own Langfuse score (so "how often does the disclaimer guard fire?" is a dashboard filter, not a grep) and recurring violations auto-file deduplicated GitHub issues via the same agent's repo. The reusable machinery is extracted as a standalone package, [`agent-governance`](https://github.com/odanree/agent-governance), so every other LLM agent in the portfolio can drop it in. The 70-line adapter in [`app/governance.py`](app/governance.py) is everything this repo carries; the protocol, sinks, dedup, and tests live upstream. See [ADR-0007](docs/adr/0007-governance-node-with-incident-sink.md) and [threat-model.md](docs/threat-model.md#stride-table) T1/T2/T13.
+
 - **Model selection by data, not vibes.** Ran the 16-case suite against Haiku 4.5 / Sonnet 4.6 / Opus 4.7 with a fixed judge:
 
   | metric | Haiku 4.5 | Sonnet 4.6 | Opus 4.7 |
@@ -188,7 +190,7 @@ tests/                    37 tests covering routing, normalization, sparse vecto
 
 ## Design docs
 
-- [Architecture decision records](docs/adr/) — six MADR-format ADRs covering LangGraph, Qdrant + BM25, Neo4j, synthetic-owner provenance, Langfuse + evalkit, MCP.
+- [Architecture decision records](docs/adr/) — seven MADR-format ADRs covering LangGraph, Qdrant + BM25, Neo4j, synthetic-owner provenance, Langfuse + evalkit, MCP, and the governance node.
 - [C4 architecture](docs/architecture/) — system context, container, and component diagrams (PlantUML, C4-PlantUML stdlib).
 - [Threat model](docs/threat-model.md) — STRIDE-style review with emphasis on LLM-specific risks: prompt injection, output disclosure, synthetic-data spoofing, cost amplification.
 

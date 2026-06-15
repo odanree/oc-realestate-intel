@@ -16,7 +16,7 @@ Three options were on the table:
 
 ## Decision
 
-Use **LangGraph** with a five-node graph: `router → {retrieval | comparison} → summarize → END`. Typed `AgentState` (TypedDict) carries `query`, `intent`, `owner_name`, `parcels`, `graph_facts`, `answer`, `citations`. Routing is via `add_conditional_edges` driven by the router node's output.
+Use **LangGraph** with the topology `router → {retrieval | comparison} → summarize → governance → END`. Typed `AgentState` (TypedDict) carries `query`, `intent`, `owner_name`, `parcels`, `graph_facts`, `answer`, `citations`, `provenance`, `governance_report`. Routing is via `add_conditional_edges` driven by the router node's output. The `governance` node was added in [ADR-0007](0007-governance-node-with-incident-sink.md); it's the explicit place where policy checks gate model output before END.
 
 ## Consequences
 

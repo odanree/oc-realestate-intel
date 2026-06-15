@@ -16,6 +16,7 @@ from app.agents.supervisor import get_graph
 from app.schemas.query import (
     Citation,
     FeedbackRequest,
+    Provenance,
     QueryRequest,
     QueryResponse,
 )
@@ -31,10 +32,12 @@ async def query(req: QueryRequest) -> QueryResponse:
     config = _trace_config(req.query)
     with observability.trace_span("oci.query", {"query": req.query}) as trace_id:
         final = await graph.ainvoke({"query": req.query}, config=config)
+    prov = final.get("provenance")
     return QueryResponse(
         answer=final.get("answer", ""),
         intent=final.get("intent", "unknown"),
         citations=[Citation(**c) for c in final.get("citations", [])],
+        provenance=Provenance(**prov) if prov else None,
         trace_id=trace_id,
     )
 

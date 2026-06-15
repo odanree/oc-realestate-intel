@@ -136,7 +136,11 @@ The eval has surfaced three real bugs so far — a hallucinated URL, speculative
 
 - **Live ArcGIS fallback with a relevance heuristic.** Hybrid search always returns top-k by similarity, not threshold, so `if not parcels:` never fires for out-of-seed addresses. The retrieval node checks "did any returned parcel's address actually contain the query's house number?" If no, fall back to the live OC Public Works FeatureServer (~500ms cache miss), enrich with synthetic owner data, return.
 
-- **Provenance flagging end-to-end.** The OC public ArcGIS layers redact owner names — real assessor data is behind a $3k/yr paywall (ParcelQuest, ATTOM, etc.). So owners are synthetic, deterministically generated per-APN. Crucially, every parcel carries `owner_source: "synthetic"`, the summarize prompt appends an italic disclaimer when synthetic data is in the context, and the UI shows an amber `synthetic` chip in the side panel. When a real provider is wired in, flip the tag and the disclaimer disappears automatically.
+- **Provenance flagging end-to-end.** The OC public ArcGIS layers redact owner names — real assessor data is behind a $3k/yr paywall (ParcelQuest, ATTOM, etc.). So owners are synthetic, deterministically generated per-APN. Crucially, every parcel carries `owner_source: "synthetic"`, the summarize prompt appends an italic disclaimer when synthetic data is in the context, the API response carries a structured `provenance: {owner_data_source, disclaimer}` field, a runtime guard re-appends the canonical disclaimer if the model drops it, and the UI shows an amber `synthetic owner data` chip next to the intent badge. When a real provider is wired in, flip the tag and every layer reverts automatically.
+
+  ![Provenance chip on the answer card](docs/screenshots/provenance-chip-card.png)
+
+  See [ADR-0004](docs/adr/0004-synthetic-owners-with-provenance-flagging.md) for the design and [docs/threat-model.md](docs/threat-model.md#stride-table) rows T1/T3 for the threat-model mapping.
 
 - **Model selection by data, not vibes.** Ran the 16-case suite against Haiku 4.5 / Sonnet 4.6 / Opus 4.7 with a fixed judge:
 
@@ -179,6 +183,14 @@ web/
   src/lib/api.ts          SSE parser + feedback POST
 tests/                    37 tests covering routing, normalization, sparse vectors, citations, synthetic chains, fallback heuristic
 ```
+
+---
+
+## Design docs
+
+- [Architecture decision records](docs/adr/) — six MADR-format ADRs covering LangGraph, Qdrant + BM25, Neo4j, synthetic-owner provenance, Langfuse + evalkit, MCP.
+- [C4 architecture](docs/architecture/) — system context, container, and component diagrams (PlantUML, C4-PlantUML stdlib).
+- [Threat model](docs/threat-model.md) — STRIDE-style review with emphasis on LLM-specific risks: prompt injection, output disclosure, synthetic-data spoofing, cost amplification.
 
 ---
 

@@ -300,8 +300,82 @@ async def summarize_node(state: AgentState) -> AgentState:
         HumanMessage(content=f"=== USER QUESTION ===\n{state['query']}\n\n=== FACTS ===\n{facts}"),
     ])
     answer = response.content if isinstance(response.content, str) else str(response.content)
+    provenance = _compute_provenance(
+        state.get("parcels") or [], state.get("graph_facts") or []
+    )
+    answer = _enforce_disclaimer(answer, provenance)
     citations = _citations_from_answer(answer, state.get("parcels") or [])
-    return {"answer": answer, "citations": citations}
+    return {"answer": answer, "citations": citations, "provenance": provenance}
+
+
+# ---------------------------------------------------------------------------
+# Provenance: structured signal + disclaimer enforcement
+# ---------------------------------------------------------------------------
+
+CANONICAL_DISCLAIMER = (
+    "*Owner and title-chain data shown are synthetic and illustrative only — "
+    "not from authoritative OC assessor records.*"
+)
+
+# Matches a markdown-italicized span (* or _ delimited, single line) that
+# mentions the synthetic/illustrative provenance. Broad on purpose: the
+# model's own phrasing varies, and we only care whether SOMETHING italic
+# names the provenance honestly.
+_DISCLAIMER_PATTERN = re.compile(
+    r"[*_][^*_\n]*(synthetic|illustrative|not\s+from\s+authoritative|paywalled)[^*_\n]*[*_]",
+    re.IGNORECASE,
+)
+
+
+def _compute_provenance(parcels: list[dict], graph_facts: list[dict]) -> dict:
+    """Classify the owner-data provenance of the retrieved facts.
+
+    - `synthetic` — all owner-bearing facts came from the deterministic generator.
+    - `authoritative` — all came from a real provider (future state).
+    - `mixed` — both kinds present in the same answer context.
+    - `none` — no owner-bearing facts retrieved.
+
+    The disclaimer string is the canonical italic line the answer should also
+    contain; downstream callers read this field instead of parsing prose.
+    """
+    sources: set[str] = set()
+    for p in parcels:
+        if not p.get("owner"):
+            continue
+        src = p.get("owner_source")
+        if src == "synthetic":
+            sources.add("synthetic")
+        elif src in ("attom", "parcelquest", "assessor"):
+            sources.add("authoritative")
+    # Title-chain transfers are synthetic today; flag them whenever present.
+    if graph_facts:
+        sources.add("synthetic")
+
+    if not sources:
+        return {"owner_data_source": "none", "disclaimer": None}
+    if sources == {"synthetic"}:
+        return {"owner_data_source": "synthetic", "disclaimer": CANONICAL_DISCLAIMER}
+    if sources == {"authoritative"}:
+        return {"owner_data_source": "authoritative", "disclaimer": None}
+    return {"owner_data_source": "mixed", "disclaimer": CANONICAL_DISCLAIMER}
+
+
+def _enforce_disclaimer(answer: str, provenance: dict) -> str:
+    """Append the canonical disclaimer when synthetic data is in context and
+    the model dropped its own italic provenance note.
+
+    Runtime guard for T1 / RULE 6 — the prompt asks the LLM to add the note,
+    the eval gates assert it, and this is the last-line backstop so the
+    disclaimer is structurally guaranteed, not prompt-dependent.
+    """
+    if not provenance.get("disclaimer"):
+        return answer
+    if _DISCLAIMER_PATTERN.search(answer):
+        return answer
+    log.warning(
+        "summarize: model dropped synthetic-data disclaimer; appending canonical"
+    )
+    return answer.rstrip() + "\n\n" + provenance["disclaimer"]
 
 
 # APN format: three groups of digits separated by hyphens (e.g. 934-21-145, 461-211-62).

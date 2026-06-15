@@ -30,6 +30,11 @@ export type GraphFact = {
   price?: number | null;
 };
 
+export type Provenance = {
+  owner_data_source: "synthetic" | "authoritative" | "mixed" | "none";
+  disclaimer: string | null;
+};
+
 export type StreamEvent =
   | { kind: "router"; intent: string }
   | { kind: "retrieval"; parcels: Parcel[]; graph_facts: GraphFact[] }
@@ -38,6 +43,7 @@ export type StreamEvent =
       kind: "summarize";
       answer: string;
       citations: Citation[];
+      provenance: Provenance | null;
     }
   | { kind: "trace"; trace_id: string | null }
   | { kind: "error"; message: string }
@@ -128,6 +134,7 @@ function parseSseBlock(block: string): StreamEvent | null {
           kind: "summarize",
           answer: payload.answer ?? "",
           citations: payload.citations ?? [],
+          provenance: payload.provenance ?? null,
         };
       case "trace":
         return { kind: "trace", trace_id: payload.trace_id ?? null };

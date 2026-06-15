@@ -33,7 +33,7 @@ dependencies = [
     "tenacity>=8.2",
     "structlog>=24.1",
     "langfuse>=2.50",
-    "agent-governance @ git+https://github.com/odanree/agent-governance.git@v0.1.0",
+    "agent-governance @ git+https://github.com/odanree/agent-governance.git@v0.2.1",
 ]
 
 [project.optional-dependencies]

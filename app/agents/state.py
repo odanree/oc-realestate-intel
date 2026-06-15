@@ -32,6 +32,10 @@ class AgentState(TypedDict, total=False):
     answer: str
     citations: list[dict]
 
+    # Structured provenance signal for downstream agent callers (see
+    # schemas.query.Provenance). Set by the summarize node.
+    provenance: dict
+
     # Cost / token bookkeeping
     input_tokens: int
     output_tokens: int

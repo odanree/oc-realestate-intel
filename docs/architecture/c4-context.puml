@@ -1,0 +1,23 @@
+@startuml C4-Context
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Context.puml
+
+title oc-realestate-intel — System Context
+
+Person(user, "Real-estate analyst", "Asks natural-language questions about Orange County parcels, owners, and title chains")
+Person(agent_caller, "Upstream agent", "Another LLM agent that consumes parcel intel via MCP (e.g. a Claude Code session)")
+
+System(oci, "oc-realestate-intel", "LangGraph multi-agent over hybrid retrieval and a synthetic-flagged owner graph. Streams answers with provenance disclaimers and Langfuse trace IDs.")
+
+System_Ext(anthropic, "Anthropic API", "Claude Sonnet 4.6 — router classifier, answer synthesis, evaluation judge")
+System_Ext(arcgis, "OC Public Works ArcGIS", "Authoritative FeatureServer of 702k OC parcels (geometry, address, year-built). Owner field redacted.")
+System_Ext(langfuse, "Langfuse", "Hosted or self-hosted trace + score store. Receives one trace per query plus eval scores.")
+
+Rel(user, oci, "NL queries, thumbs feedback", "HTTPS / SSE")
+Rel(agent_caller, oci, "oc_parcel_query / oc_submit_feedback", "MCP")
+
+Rel(oci, anthropic, "Router + summarize + judge calls", "HTTPS")
+Rel(oci, arcgis, "Live fallback for parcels outside seed", "HTTPS")
+Rel(oci, langfuse, "Per-node spans, intent/source tags, eval scores, user feedback", "HTTPS")
+
+SHOW_LEGEND()
+@enduml

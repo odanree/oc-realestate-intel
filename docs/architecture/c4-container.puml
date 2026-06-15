@@ -1,0 +1,45 @@
+@startuml C4-Container
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+
+title oc-realestate-intel — Containers
+
+Person(user, "Real-estate analyst")
+Person(agent_caller, "Upstream agent")
+
+System_Boundary(oci, "oc-realestate-intel") {
+  Container(web, "Chat UI", "Next.js 16 / React 19 / Tailwind 4", "Streams answers, renders agent trace, parcel side panel, citations, thumbs feedback")
+  Container(api, "FastAPI gateway", "FastAPI / SSE / Pydantic v2", "Hosts /query (JSON + SSE), /feedback, /health. Owns the LangGraph supervisor.")
+  Container(mcp, "MCP server", "Python MCP SDK", "Wraps /query + /feedback so other agents can call oc_parcel_query")
+
+  ContainerDb(pg, "Postgres", "Cached parcels", "System of record for parcel attributes. Seeded from ArcGIS, joined back from Qdrant/Neo4j hits.")
+  ContainerDb(qdrant, "Qdrant", "Vector store — named vectors", "Dense (MiniLM-L6) + sparse (BM25) with RRF fusion. APN fast-path bypasses search.")
+  ContainerDb(neo4j, "Neo4j", "Owner / title-chain graph", "Owners, parcels, transfers. Tagged owner_source: synthetic until a real provider is wired in.")
+
+  Container(seed, "Seed + eval scripts", "Python", "scripts/seed.py builds Postgres/Qdrant/Neo4j from ArcGIS. scripts/eval.py runs the 16-case suite via evalkit.")
+}
+
+System_Ext(anthropic, "Anthropic API")
+System_Ext(arcgis, "OC Public Works ArcGIS")
+System_Ext(langfuse, "Langfuse")
+
+Rel(user, web, "Browser", "HTTPS")
+Rel(agent_caller, mcp, "stdio / streamable-HTTP", "MCP")
+
+Rel(web, api, "Streams answer + agent trace", "SSE")
+Rel(mcp, api, "One-shot queries", "HTTP")
+
+Rel(api, anthropic, "Router + summarize", "HTTPS")
+Rel(api, qdrant, "Hybrid retrieval, APN fast-path", "gRPC")
+Rel(api, neo4j, "Portfolio + title chain", "Bolt")
+Rel(api, pg, "Parcel hydration", "SQL")
+Rel(api, arcgis, "Live fallback (relevance-gated)", "HTTPS")
+Rel(api, langfuse, "Per-node spans + tags", "HTTPS")
+
+Rel(seed, arcgis, "Bulk parcel pull", "HTTPS")
+Rel(seed, pg, "INSERT parcels", "SQL")
+Rel(seed, qdrant, "Upsert dense + sparse vectors", "gRPC")
+Rel(seed, neo4j, "Create owner / parcel / transfer nodes", "Bolt")
+Rel(seed, langfuse, "Eval traces with scores", "HTTPS")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,59 @@
+@startuml C4-Component-Agent
+!include https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Component.puml
+
+title FastAPI gateway — LangGraph supervisor components
+
+Container_Boundary(api, "FastAPI gateway") {
+  Component(query_router, "Query router", "FastAPI router", "Endpoints: POST /query, GET /query/stream, POST /feedback")
+  Component(graph, "LangGraph StateGraph", "langgraph", "Compiled topology: router → {retrieval | comparison} → summarize → END")
+
+  Component(router_node, "router_node", "node", "Classifies intent (lookup / compare / summarize / title_chain / portfolio / unknown), extracts owner_name for portfolio")
+  Component(retrieval_node, "retrieval_node", "node", "APN fast-path → hybrid (BM25+dense+RRF) → live ArcGIS fallback. Title-chain side-call to Neo4j.")
+  Component(comparison_node, "comparison_node", "node", "Target parcel + comps_in_radius (only for intent=compare)")
+  Component(summarize_node, "summarize_node", "node", "Generates grounded answer; enforces RULE 6 italic provenance disclaimer when synthetic data is in context")
+
+  Component(tools, "Agent tools", "app/agents/tools.py", "parcel_lookup, owner_holdings, title_chain, comps_in_radius — wraps the service layer for LangGraph")
+  Component(obs, "Observability", "app/observability.py", "Langfuse callback factory + tag accumulator; trace_span context manager; create_score for thumbs feedback")
+
+  Component(vector_svc, "Vector service", "app/services/vector.py", "Qdrant client; hybrid search and APN-keyed retrieve_by_id")
+  Component(graph_svc, "Graph service", "app/services/graph.py", "Neo4j client; owner_holdings + title_chain Cypher")
+  Component(db_svc, "DB service", "app/services/db.py", "Postgres pool; parcel hydration by APN")
+  Component(arc_svc, "Live ArcGIS", "app/services/live_arcgis.py", "OC FeatureServer client with relevance-gated fallback")
+}
+
+ContainerDb_Ext(pg, "Postgres")
+ContainerDb_Ext(qdrant, "Qdrant")
+ContainerDb_Ext(neo4j, "Neo4j")
+System_Ext(arcgis, "OC ArcGIS")
+System_Ext(anthropic, "Anthropic API")
+System_Ext(langfuse, "Langfuse")
+
+Rel(query_router, graph, "ainvoke / astream(updates)")
+Rel(query_router, obs, "trace_span, create_score")
+
+Rel(graph, router_node, "START →")
+Rel(router_node, retrieval_node, "intent ∈ {lookup, summarize, title_chain, portfolio}")
+Rel(router_node, comparison_node, "intent = compare")
+Rel(retrieval_node, summarize_node, "")
+Rel(comparison_node, summarize_node, "")
+
+Rel(router_node, anthropic, "JSON intent classification")
+Rel(summarize_node, anthropic, "Grounded summary with RULE-6 disclaimer")
+
+Rel(retrieval_node, tools, "parcel_lookup, owner_holdings, title_chain")
+Rel(comparison_node, tools, "parcel_lookup, comps_in_radius")
+
+Rel(tools, vector_svc, "")
+Rel(tools, graph_svc, "")
+Rel(tools, db_svc, "")
+Rel(retrieval_node, arc_svc, "live fallback (relevance-gated)")
+
+Rel(vector_svc, qdrant, "")
+Rel(graph_svc, neo4j, "")
+Rel(db_svc, pg, "")
+Rel(arc_svc, arcgis, "")
+
+Rel(obs, langfuse, "per-node spans, intent/source tags, scores")
+
+SHOW_LEGEND()
+@enduml

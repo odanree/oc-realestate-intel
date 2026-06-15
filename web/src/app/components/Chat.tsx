@@ -5,6 +5,7 @@ import {
   Citation,
   GraphFact,
   Parcel,
+  Provenance,
   StreamEvent,
   streamQuery,
   submitFeedback,
@@ -20,6 +21,7 @@ type Turn = {
   intent?: string;
   answer?: string;
   citations: Citation[];
+  provenance?: Provenance | null;
   parcels: Parcel[];
   graph_facts: GraphFact[];
   trace: TraceEvent[];
@@ -195,6 +197,7 @@ function applyEvent(turn: Turn, evt: StreamEvent): Turn {
         ...turn,
         answer: evt.answer,
         citations: evt.citations,
+        provenance: evt.provenance,
         trace: [
           ...turn.trace,
           { stage: "summarize", label: "Synthesized answer", t: Date.now() },
@@ -225,7 +228,12 @@ function TurnView({
           {turn.query}
         </div>
       </div>
-      {turn.intent && <IntentBadge intent={turn.intent} />}
+      {(turn.intent || turn.provenance) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {turn.intent && <IntentBadge intent={turn.intent} />}
+          {turn.provenance && <ProvenanceChip provenance={turn.provenance} />}
+        </div>
+      )}
       {turn.answer ? (
         <>
           <div className="max-w-2xl bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 px-4 py-3 rounded-2xl rounded-bl-md prose prose-sm dark:prose-invert max-w-none">
@@ -309,6 +317,26 @@ function FeedbackBar({
         <span className="text-[10px] italic">recorded</span>
       )}
     </div>
+  );
+}
+
+function ProvenanceChip({ provenance }: { provenance: Provenance }) {
+  // Only flag when there's something for the user to know — synthetic or mixed.
+  if (provenance.owner_data_source === "none" || provenance.owner_data_source === "authoritative") {
+    return null;
+  }
+  const label =
+    provenance.owner_data_source === "mixed"
+      ? "mixed: includes synthetic"
+      : "synthetic owner data";
+  return (
+    <span
+      title={provenance.disclaimer ?? undefined}
+      className="inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-200 dark:border-amber-800/60"
+    >
+      <span aria-hidden className="text-amber-600 dark:text-amber-400">●</span>
+      {label}
+    </span>
   );
 }
 

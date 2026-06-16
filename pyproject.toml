@@ -50,6 +50,15 @@ dev = [
     # (sibling repo). Not pinned here so the dev install pulls editable.
 ]
 
+[tool.hatch.metadata]
+# Required because `agent-governance` is pulled directly from GitHub via
+# `git+https://...@v0.2.1` in [project.dependencies]. Without this flag,
+# Hatchling 1.x rejects direct-URL deps with:
+#   "Dependency #N of field `project.dependencies` cannot be a direct
+#    reference unless field `tool.hatch.metadata.allow-direct-references`
+#    is set to `true`"
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 

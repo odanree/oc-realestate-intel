@@ -10,11 +10,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps for asyncpg + lxml + torch wheels.
+# System deps for asyncpg + lxml + torch wheels, plus git for the
+# `agent-governance @ git+https://...` dependency in pyproject.toml.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
         ca-certificates \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
 # Hatchling validates `readme = "README.md"` at metadata-generation time,

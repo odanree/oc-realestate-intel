@@ -13,6 +13,12 @@
 #   docker compose -f docker-compose.prod.yml up -d
 # First boot triggers the entrypoint's --skip-if-seeded seed (~12 min cold).
 
+# Pin the compose project name so the network resolves to `oci_oci-net`
+# regardless of the checkout dir name (default project name = dirname, which
+# for /opt/oc-realestate-intel would produce `oc-realestate-intel_oci-net`
+# and break the portfolio-caddy external-net-4 attachment).
+name: oci
+
 services:
   qdrant:
     image: qdrant/qdrant:v1.11.0

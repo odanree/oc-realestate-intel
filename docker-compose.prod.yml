@@ -1,0 +1,92 @@
+# Production compose stack — runs on the Hetzner VPS alongside portfolio-infra.
+# ADR-XXXX: replaces the AWS marquez-oci EC2 deploy (t3.medium + EIP + EBS
+# ≈ $32/mo) by folding into the shared portfolio-infra Postgres and reusing
+# portfolio-caddy for TLS termination.
+#
+# Bounded context: qdrant + neo4j + oci-app live on this stack's oci-net.
+# oci-app also joins portfolio-infra_portfolio-net to reach the shared
+# portfolio-postgres. portfolio-caddy joins oci_oci-net (declared as
+# external-net-4 on the portfolio-infra side) to reverse-proxy oci-app:8000.
+#
+# Bring-up (VPS):
+#   cd /opt/oc-realestate-intel
+#   docker compose -f docker-compose.prod.yml up -d
+# First boot triggers the entrypoint's --skip-if-seeded seed (~12 min cold).
+
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.11.0
+    container_name: oci-qdrant
+    restart: unless-stopped
+    volumes:
+      - qdrant_data:/qdrant/storage
+    networks:
+      - oci-net
+
+  neo4j:
+    image: neo4j:5.20-community
+    container_name: oci-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: neo4j/${OCI_NEO4J_PASSWORD}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      # Cap heap at 512m — the VPS is a shared box (15+ containers).
+      # Default was 1GB from image auto-detection. See bulkhead pattern
+      # in the migration ADR.
+      NEO4J_server_memory_heap_initial__size: 256m
+      NEO4J_server_memory_heap_max__size: 512m
+      NEO4J_server_memory_pagecache_size: 256m
+    volumes:
+      - neo4j_data:/data
+    networks:
+      - oci-net
+
+  oci-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oci-app
+    restart: unless-stopped
+    environment:
+      # Shared portfolio-postgres — the oci database is created by
+      # portfolio-infra/init-db/01-databases.sql; portfolio_user has full grants.
+      DATABASE_URL: postgresql+asyncpg://portfolio_user:${PORTFOLIO_DB_PASSWORD}@portfolio-postgres:5432/oci
+      QDRANT_URL: http://oci-qdrant:6333
+      QDRANT_COLLECTION: parcels
+      NEO4J_URI: bolt://oci-neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: ${OCI_NEO4J_PASSWORD}
+      ANTHROPIC_API_KEY: ${OCI_ANTHROPIC_API_KEY}
+      ANTHROPIC_MODEL: ${OCI_ANTHROPIC_MODEL:-claude-sonnet-4-6}
+      LANGFUSE_PUBLIC_KEY: ${OCI_LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${OCI_LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_HOST: ${OCI_LANGFUSE_HOST:-https://us.cloud.langfuse.com}
+      LOG_LEVEL: INFO
+      # Cold-boot seed: default 10k parcels across Irvine/Newport/Anaheim/Orange.
+      # Override on first apply if you want a smaller demo footprint.
+      OCI_SEED_LIMIT: ${OCI_SEED_LIMIT:-10000}
+    depends_on:
+      - qdrant
+      - neo4j
+    networks:
+      - oci-net
+      - portfolio-net
+
+volumes:
+  qdrant_data:
+  neo4j_data:
+
+networks:
+  # This stack's own network. portfolio-caddy joins it from the outside
+  # as external-net-4 to reverse-proxy oci-app:8000. docker names this
+  # `<project>_<network>` — this file is expected to be brought up in the
+  # `oci` project directory, so the resolved name is `oci_oci-net`.
+  oci-net:
+    driver: bridge
+
+  # Shared Postgres lives on portfolio-infra's portfolio-net. We attach
+  # oci-app to it so DATABASE_URL can resolve portfolio-postgres by DNS.
+  portfolio-net:
+    external: true
+    name: portfolio-infra_portfolio-net
